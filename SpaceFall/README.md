@@ -1,4 +1,4 @@
-# Space Fall
+# SCOOT
 
 A 2D pixel art iOS game. An astronaut's ship blows up in orbit and he falls back toward the planet. Avoid asteroids, meteors, aliens, space junk, and solar winds while managing jetpack fuel.
 
@@ -44,14 +44,14 @@ A 2D pixel art iOS game. An astronaut's ship blows up in orbit and he falls back
 1. Open Xcode → **File → New → Project**
 2. Choose **iOS → Game** template
 3. Set:
-   - Product Name: `SpaceFall`
+   - Product Name: `SCOOT`
    - Game Technology: **SpriteKit**
    - Language: **Swift**
 4. Delete the auto-generated files:
    - `GameScene.swift` (replace with ours)
    - `GameScene.sks` (delete — we set up the scene in code)
    - `Actions.sks` (delete)
-5. Drag all `.swift` files from `SpaceFall/Sources/` into the Xcode project navigator
+5. Drag all `.swift` files from `SCOOT/Sources/` into the Xcode project navigator
 6. In `Main.storyboard`, set the view class of the initial view controller's view to `SKView`
    - Select the `View` inside `Game View Controller`
    - In the Identity Inspector, change **Class** to `SKView`
@@ -75,7 +75,7 @@ GameConfig.minSpawnInterval    // seconds at peak difficulty
 ## Project Structure
 
 ```
-SpaceFall/Sources/
+SCOOT/Sources/
 ├── AppDelegate.swift        — App entry point
 ├── GameViewController.swift — SKView host
 ├── GameConfig.swift         — All constants & physics categories

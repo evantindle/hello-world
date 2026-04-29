@@ -39,7 +39,7 @@ final class MenuScene: SKScene {
     private func buildUI() {
         // Title
         let title = SKLabelNode(fontNamed: "Courier-Bold")
-        title.text = "SPACE FALL"
+        title.text = "SCOOT"
         title.fontSize = 40
         title.fontColor = .white
         title.position = CGPoint(x: 0, y: size.height * 0.18)
@@ -63,9 +63,9 @@ final class MenuScene: SKScene {
         addChild(astroNode)
 
         // Instructions
-        let instr1 = makeLabel("HOLD screen → jetpack on", y: -size.height * 0.12, size: 13)
-        let instr2 = makeLabel("SLIDE thumb up/down → rotate", y: -size.height * 0.12 - 24, size: 13)
-        let instr3 = makeLabel("Tilt to steer. Collect ⚡ fuel.", y: -size.height * 0.12 - 48, size: 13)
+        let instr1 = makeLabel("HOLD screen \u{2192} jetpack on", y: -size.height * 0.12, size: 13)
+        let instr2 = makeLabel("SLIDE thumb up/down \u{2192} rotate", y: -size.height * 0.12 - 24, size: 13)
+        let instr3 = makeLabel("Tilt to steer. Collect \u{26A1} fuel.", y: -size.height * 0.12 - 48, size: 13)
         addChild(instr1)
         addChild(instr2)
         addChild(instr3)
