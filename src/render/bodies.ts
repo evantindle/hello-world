@@ -37,7 +37,7 @@ void main() {
   vec2 c = quadCorner(gl_VertexID);
   vec3 P = aPosR.xyz;
   float depth = dot(P - uCamPos, uCamFwd);
-  if (depth <= 1e-6) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+  if (depth <= 1e-6 || !secondaryCandidate(P)) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
   float rPx = aPosR.w * uFocalPx / depth;
   float I = aColI.w;
   float minPx = 1.5 * uPxScale;

@@ -94,7 +94,7 @@ export const pythagorean: SceneDef = {
       worlds: [w],
       duration: 70,
       particles: [
-        ...embers(w, { count: 6000, life: 0.9, speed: 0.045, size: 0.009, intensity: 2.4, gravity: 0.1 }),
+        ...embers(w, { count: 5000, life: 0.45, speed: 0.04, size: 0.009, intensity: 2.2, gravity: 0.1 }),
       ],
       camera: { elevation: 58, orbitSpeed: 1.6, margin: 1.32, holdTime: 4, azimuth: -90, minRadius: 1.6 },
       director: { baseRate: 2.8, maxScreenSpeed: 1.15, minRate: 0.05, startHold: 3.2, easeIn: 1.8, outro: 7, ejectFollow: 3.5 },

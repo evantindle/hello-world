@@ -387,7 +387,7 @@ void main() {
   vec4 V = texelFetch(uVel, ij, 0);
   vec4 A = texelFetch(uAttr, ij, 0);
   int g = int(A.x + 0.5);
-  if (g < 0 || g >= MAX_GROUPS || P.w < 0.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+  if (g < 0 || g >= MAX_GROUPS || P.w < 0.0 || !secondaryCandidate(P.xyz)) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
   vec4 GA = uGA[g], GV = uGV[g], GCol = uGCol[g];
   int mode = int(GA.x + 0.5);
   int host = int(GA.y + 0.5) - 1;

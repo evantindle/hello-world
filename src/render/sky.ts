@@ -178,6 +178,7 @@ void main() {
   vec2 c = quadCorner(gl_VertexID);
   float halfPx = (2.2 + 3.0 * clamp(sqrt(aFlux) * 0.08, 0.0, 1.0) + aSpike * 26.0) * uPxScale;
   vec3 p = uCamPos + aDir * uSkyDist;
+  if (!secondaryCandidate(p)) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
   float wpp = uSkyDist / uFocalPx;
   vec3 corner = p + (uCamRight * c.x + uCamUp * c.y) * halfPx * wpp;
   float valid;

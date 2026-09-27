@@ -95,6 +95,25 @@ uniform vec4 uLensScr[MAX_LENS];   // xy lens centre (target px), z shadow radiu
 uniform vec3 uCamPos;
 uniform int uImageLens;            // -1 primary images; k = secondary image of lens k
 
+// Secondary images are only worth drawing for sources close to the lens axis: beyond ~3 Einstein
+// radii their magnification is below 1%. Cheap early-out for the secondary-image passes.
+bool secondaryCandidate(vec3 p) {
+  if (uImageLens < 0) return true;
+  for (int k = 0; k < MAX_LENS; k++) {
+    if (k != uImageLens) continue;
+    vec3 toL = uLensPos[k].xyz - uCamPos;
+    float Dl = length(toL);
+    vec3 n = toL / Dl;
+    vec3 toP = p - uCamPos;
+    float Ds = dot(toP, n);
+    if (Ds <= Dl) return false;
+    float beta = length(toP - Ds * n) / Ds;
+    float thetaE2 = 2.0 * uLensPos[k].w * (Ds - Dl) / (Dl * Ds);
+    return beta * beta < 9.0 * thetaE2;
+  }
+  return false;
+}
+
 // Map a world-space source point to its lensed image position (kept at the source depth).
 // valid = 0 when this pass has no image for the point (secondary pass, source not behind the lens).
 vec3 lensMap(vec3 p, out vec4 behind, out float valid) {
