@@ -25,10 +25,12 @@ Pick a scene, press **Export MP4**, and get a frame-perfect 1080×1920 / 60 fps 
 | **The Butterfly Effect** (`butterfly-effect`) | 48 copies of the Pythagorean system differing by one part in a billion, overlaid in a rainbow (they add up to white) | The white trail splits into 48 colours: 48 different fates |
 | **Random Chaos** (`chaos`, seeded) | Random masses and positions, re-rolled until the system resolves within the clip | An ejection or a stellar collision (with debris) |
 | **Butterfly / Moth / Dragonfly / Yin-Yang / Goggles** | Šuvakov–Dmitrašinović (2013) periodic orbits drawn as long-exposure light paintings | They repeat exactly |
+| **Cold Collapse** (`collapse`, seeded) | 24 stars released from rest fall together | A flash at maximum compression, then they burst outward like fireworks; the clip counts how many escape |
 | **Anatomy of a Black Hole** (`black-hole`) | A Gargantua-style accretion disk: the far side of the disk is lensed over the shadow, one side is Doppler-boosted | A slow push-in beauty shot |
 | **Two Black Holes Collide** (`bh-merger`) | Two black holes with their own disks spiral in, radiating gravitational waves (visible as a spiral ripple in spacetime that chirps faster and faster) | Merger flash, gravitational-wave burst, recoil kick |
 | **Spaghettification** (`tde`) | A star on a parabolic orbit is tidally stretched and ripped into a stream | Half the debris falls back into a glowing ring; the rest is flung away |
 | **Three Become One** (`bh-triple`, seeded) | A third black hole crashes into a binary | Two successive mergers leave one survivor |
+| **Rogue Black Hole** (`rogue`) | A black hole of two solar masses passes through the solar system, shredding the asteroid and Kuiper belts | Planets are swallowed, stolen or flung into interstellar space; the ending tallies who is left |
 | **When Galaxies Collide** (`galaxies`) | Two spirals (~440k stars) pass each other, throwing out tidal tails | The cores sink together and merge; a quasar ignites |
 
 Seeded scenes take `?seed=N` (or the dice button) and give a new, still-resolving system each time.

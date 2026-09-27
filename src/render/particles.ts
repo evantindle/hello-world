@@ -750,7 +750,7 @@ export class ParticleSystem {
     const p = this.spawnProg.use();
     p.v3('uCenter', opts.center).v3('uBaseVel', opts.vel).v3('uNormal', n)
       .f1('uSpeed', opts.speed).f1('uFlat', opts.flat ?? 0).f1('uLife', opts.life)
-      .f1('uRadius', opts.radius ?? 0).f1('uSeed', Math.random() * 1000).i1('uStartRow', startRow);
+      .f1('uRadius', opts.radius ?? 0).f1('uSeed', ((this.frame * 7.31 + g.burstCursor * 13.7) % 997) + 1).i1('uStartRow', startRow);
     this.fs.draw();
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
