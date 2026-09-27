@@ -101,6 +101,7 @@ export class Runtime {
     renderer.particles.substeps = s.substeps ?? 4;
     renderer.particles.gain = 1;
     renderer.particles.setup(s.particles ?? [], opts.seed);
+    renderer.particles.syncBodies(this.primary.bodies);
     for (const g of s.particles ?? []) {
       if (g.mode === 'disk' && g.host) this.spin.set(g.host, g.normal ?? [0, 0, 1]);
     }
@@ -254,6 +255,9 @@ export class Runtime {
         });
       }
       this.renderer.particles.update(frames, advanced);
+    } else if (!this.skipParticles) {
+      // Holding still (title card, pause): keep particle shading in sync with the bodies.
+      this.renderer.particles.syncBodies(this.primary.bodies);
     }
 
     const f = this.framing();

@@ -204,6 +204,8 @@ export class World {
   }
 
   add(init: BodyInit): Body {
+    // Bodies must hold the integration state before the arrays are rebuilt around the newcomer.
+    this.pull();
     const kind = init.kind ?? 'star';
     const rs = kind === 'blackhole' ? this.schwarzschild(init.m) : 0;
     const trail =
@@ -531,17 +533,19 @@ export class World {
         ? big.color
         : ([0, 1, 2].map((k) => (a.color[k] * la + b.color[k] * lb) / (la + lb)) as RGB),
       intensity: anyBH ? big.intensity : Math.max(a.intensity, b.intensity) * 1.25,
-      trail: big.trail ?? undefined,
+      trail: big.trail ?? false,
       emit: big.emit ?? undefined,
       track: a.track || b.track,
       canEject: a.canEject && b.canEject,
       label: big.label,
       spikes: Math.max(a.spikes, b.spikes),
-      ring: Math.max(a.ring, b.ring),
+      ring: anyBH ? Math.max(a.kind === 'blackhole' ? a.ring : 0, b.kind === 'blackhole' ? b.ring : 0) : Math.max(a.ring, b.ring),
       tag: big.tag,
     };
     if (this.onMerge) init = { ...init, ...this.onMerge(a, b, init) };
-    // Remove a and b, then add the result.
+    // Remove a and b, then add the result. Bodies were just pulled; mark dirty so add() does not
+    // pull the old state array into the shortened body list.
+    this.dirty = true;
     a.alive = false;
     b.alive = false;
     this.bodies.splice(this.bodies.indexOf(a), 1);

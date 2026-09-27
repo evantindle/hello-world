@@ -129,6 +129,7 @@ export const galaxyCollision: SceneDef = {
       size: 0.012,
       intensity: 1.6,
       gravity: 0.2,
+      gain: 0,
     };
     return {
       worlds: [w],

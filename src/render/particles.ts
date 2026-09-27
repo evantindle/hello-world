@@ -75,6 +75,8 @@ export interface ParticleGroupSpec {
   falloff?: number;
   /** Per-particle initial state (free/rigid/disk groups). */
   init?: (i: number) => ParticleInit;
+  /** Initial brightness multiplier (e.g. 0 for effects switched on later). */
+  gain?: number;
 }
 
 export interface ParticleGroup {
@@ -404,15 +406,19 @@ void main() {
     I *= (1.0 - t) * (1.0 - t) * smoothstep(0.0, 0.04, t);
     col = mix(mix(vec3(1.0), col, smoothstep(0.0, 0.25, t)), col * vec3(1.0, 0.45, 0.3), smoothstep(0.5, 1.0, t));
   } else if (cmode == 2 && host >= 0) {
-    vec3 rel = x - uBP1[host].xyz;
+    // Rigid groups (a star before disruption) are coloured relative to the body tidally heating
+    // them, not their own centre.
+    int oth = int(uGD[g].z + 0.5) - 1;
+    int ch = (mode == 3 && oth >= 0) ? oth : host;
+    vec3 rel = x - uBP1[ch].xyz;
     float r = length(rel);
     float rIn = uGB[g].x;
-    float rs = uBK[host].z;
+    float rs = uBK[ch].z;
     float T = GCol.w * pow(max(r, rIn) / rIn, -0.75);
     // Particles carrying their own temperature (e.g. stellar debris) never look cooler than it.
     float Tself = A.w > 100.0 ? A.w : 0.0;
     T = max(T, Tself);
-    vec3 vr = v - uBV1[host].xyz;
+    vec3 vr = v - uBV1[ch].xyz;
     vec3 toCam = normalize(uCamPos - x);
     float beta = min(length(vr) / uC, 0.95);
     float cosT = dot(normalize(vr + 1e-9), toCam);
@@ -426,7 +432,7 @@ void main() {
     float emis = max(pow(max(r, rIn) / rIn, -uGCol2[g].w), uGE[g].w);
     I *= pow(D, 3.0) * pow(grav, 4.0) * emis * (Tself > 0.0 ? 1.0 : 0.7 + 0.6 * A.w);
     // Plunging material inside the ISCO fades out.
-    I *= smoothstep(rs * 1.05, rs * 2.2, r);
+    if (rs > 0.0) I *= smoothstep(rs * 1.05, rs * 2.2, r);
   } else if (cmode == 3) {
     float cool = life > 0.0 ? clamp(age / life, 0.0, 1.0) : clamp(age * 0.15, 0.0, 1.0);
     float T = mix(14000.0, 1800.0, pow(cool, 0.6));
@@ -573,7 +579,7 @@ export class ParticleSystem {
       const start = row * TEX_W;
       const rows = Math.max(1, Math.ceil(spec.count / TEX_W));
       row += rows;
-      return { spec, index, start, count: rows * TEX_W, release: 0, gain: 1, burstCursor: 0 };
+      return { spec, index, start, count: rows * TEX_W, release: 0, gain: spec.gain ?? 1, burstCursor: 0 };
     });
     this.rows = Math.max(1, row);
     this.capacity = this.rows * TEX_W;
@@ -643,6 +649,13 @@ export class ParticleSystem {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     this.cur = 0;
     this.frame = 0;
+    this.bodyIndex.clear();
+    this.bodyList = [];
+  }
+
+  /** Refresh body uniforms without advancing (start holds, pauses, right after setup). */
+  syncBodies(bodies: Body[]) {
+    this.packBodies(bodies.map((body) => ({ body, x0: body.x, v0: body.v, x1: body.x, v1: body.v })));
   }
 
   group(name: string): ParticleGroup | undefined {

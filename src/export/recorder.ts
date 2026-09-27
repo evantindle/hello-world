@@ -28,13 +28,14 @@ export class ClipSession {
     this.maxFrames = Math.ceil((opts.duration ?? 180) * opts.fps);
   }
 
+  /** Frame-exact ending: count whole frames instead of trusting an accumulated float clock. */
   get done(): boolean {
-    return this.rt.done || this.frame >= this.maxFrames;
+    return this.frame >= Math.min(this.maxFrames, Math.round(this.rt.endAt * this.opts.fps));
   }
 
   /** Estimated total frames (the scene may end early once it resolves). */
   get totalFrames(): number {
-    return Math.min(this.maxFrames, Math.ceil(this.rt.endAt * this.opts.fps));
+    return Math.min(this.maxFrames, Math.round(this.rt.endAt * this.opts.fps));
   }
 
   step() {
@@ -95,10 +96,11 @@ export async function exportClip(
   await output.start();
   await app.overlay.fontsReady;
 
-  app.busy = true;
-  const session = new ClipSession(app, opts);
   const t0 = performance.now();
+  let session: ClipSession | null = null;
   try {
+    app.busy = true;
+    session = new ClipSession(app, opts);
     while (!session.done) {
       if (opts.signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
       session.step();
@@ -119,7 +121,7 @@ export async function exportClip(
     app.busy = false;
   }
   const buffer = output.target.buffer;
-  if (!buffer) throw new Error('Encoder produced no data.');
+  if (!buffer || !session) throw new Error('Encoder produced no data.');
   const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
   return {
     blob: new Blob([buffer], { type: 'video/mp4' }),

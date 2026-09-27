@@ -84,86 +84,92 @@ async function main() {
   const addr = server.httpServer.address();
   const base = `http://127.0.0.1:${addr.port}/`;
 
-  const browser = await chromium.launch({
-    headless: !o.headed,
-    channel: o.channel,
-    executablePath: o.executable ?? process.env.CHROME_PATH,
-    args: ['--ignore-gpu-blocklist', '--enable-gpu-rasterization', '--enable-unsafe-swiftshader'],
-  });
-  const page = await browser.newPage({ viewport: { width: 540, height: 960 } });
-  page.on('pageerror', (e) => console.error('[page]', e.message));
-  await page.goto(`${base}?test=1&cube=${o.cube}&particles=${o.particles ?? 1}`);
-  await page.waitForFunction(() => window.gravitasReady || window.gravitasError, null, { timeout: 120000 });
-  const err = await page.evaluate(() => window.gravitasError);
-  if (err) throw new Error(err);
-  const all = await page.evaluate(() => window.gravitas.scenes());
-  if (o.list) {
-    for (const s of all) console.log(`${s.id.padEnd(18)} ${s.category.padEnd(12)} ${s.title}${s.seeded ? '  (seeded)' : ''}`);
-    await browser.close();
-    await server.close();
-    return;
-  }
-  const renderer = await page.evaluate(() => {
-    const gl = window.gravitas.app.renderer.gl;
-    const ext = gl.getExtension('WEBGL_debug_renderer_info');
-    return ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
-  });
-  console.log(`GPU: ${renderer}`);
-  if (/swiftshader/i.test(renderer)) console.log('  (software rendering: expect a few frames per second — try --channel chrome --headed for GPU speed)');
-
-  const ids = o.scene === 'all' ? all.map((s) => s.id) : o.scene.split(',');
-  const [bw, bh] = ASPECTS[o.aspect] ?? ASPECTS['9:16'];
-  const width = Math.round(((o.width ?? bw) * o.scale) / 2) * 2;
-  const height = Math.round(((o.height ?? bh) * o.scale) / 2) * 2;
-  fs.mkdirSync(path.resolve(root, o.out), { recursive: true });
-
-  for (const id of ids) {
-    if (!all.some((s) => s.id === id)) {
-      console.error(`Unknown scene "${id}". Use --list.`);
-      continue;
+  let browser;
+  try {
+    browser = await chromium.launch({
+      headless: !o.headed,
+      channel: o.channel,
+      executablePath: o.executable ?? process.env.CHROME_PATH,
+      args: ['--ignore-gpu-blocklist', '--enable-gpu-rasterization', '--enable-unsafe-swiftshader'],
+    });
+    const page = await browser.newPage({ viewport: { width: 540, height: 960 } });
+    page.on('pageerror', (e) => console.error('[page]', e.message));
+    await page.goto(`${base}?test=1&cube=${o.cube}&particles=${o.particles ?? 1}`);
+    await page.waitForFunction(() => window.gravitasReady || window.gravitasError, null, { timeout: 120000 });
+    const err = await page.evaluate(() => window.gravitasError);
+    if (err) throw new Error(err);
+    const all = await page.evaluate(() => window.gravitas.scenes());
+    if (o.list) {
+      for (const s of all) console.log(`${s.id.padEnd(18)} ${s.category.padEnd(12)} ${s.title}${s.seeded ? '  (seeded)' : ''}`);
+      return;
     }
-    const file = path.resolve(root, o.out, `${id}${o.seed !== 1 ? `-seed${o.seed}` : ''}-${width}x${height}-${o.fps}fps.mp4`);
-    const info = await page.evaluate((a) => window.gravitas.beginClip(a), {
-      scene: id,
-      seed: o.seed,
-      width,
-      height,
-      fps: o.fps,
-      duration: o.duration,
-      captions: o.captions,
-      handle: o.handle,
+    const renderer = await page.evaluate(() => {
+      const gl = window.gravitas.app.renderer.gl;
+      const ext = gl.getExtension('WEBGL_debug_renderer_info');
+      return ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
     });
-    console.log(`\n▶ ${info.title} → ${path.relative(root, file)} (${width}×${height} @ ${o.fps} fps, ~${(info.total / o.fps).toFixed(1)} s)`);
-    const ff = spawn(ffmpeg, [
-      '-y', '-hide_banner', '-loglevel', 'error',
-      '-f', 'image2pipe', '-framerate', String(o.fps), '-i', '-',
-      '-c:v', 'libx264', '-preset', o.preset, '-crf', String(o.crf),
-      '-vf', 'scale=out_color_matrix=bt709:out_range=tv,format=yuv420p',
-      '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709',
-      '-movflags', '+faststart', '-r', String(o.fps), file,
-    ], { stdio: ['pipe', 'inherit', 'inherit'] });
-    const exited = new Promise((res, rej) => {
-      ff.on('error', (e) => rej(new Error(`Could not start ffmpeg (${ffmpeg}): ${e.message}. Install ffmpeg or set FFMPEG_PATH.`)));
-      ff.on('close', (code) => (code === 0 ? res() : rej(new Error(`ffmpeg exited with ${code}`))));
-    });
-    const t0 = Date.now();
-    for (;;) {
-      const r = await page.evaluate(({ n, jpeg }) => window.gravitas.nextFrames(n, jpeg ? 'image/jpeg' : 'image/png', 0.95), { n: 4, jpeg: o.jpeg });
-      for (const url of r.frames) {
-        const buf = Buffer.from(url.slice(url.indexOf(',') + 1), 'base64');
-        if (!ff.stdin.write(buf)) await new Promise((res) => ff.stdin.once('drain', res));
+    console.log(`GPU: ${renderer}`);
+    if (/swiftshader/i.test(renderer)) console.log('  (software rendering: expect a few frames per second — try --channel chrome --headed for GPU speed)');
+
+    const ids = o.scene === 'all' ? all.map((s) => s.id) : o.scene.split(',');
+    const [bw, bh] = ASPECTS[o.aspect] ?? ASPECTS['9:16'];
+    const width = Math.round(((o.width ?? bw) * o.scale) / 2) * 2;
+    const height = Math.round(((o.height ?? bh) * o.scale) / 2) * 2;
+    fs.mkdirSync(path.resolve(root, o.out), { recursive: true });
+
+    for (const id of ids) {
+      if (!all.some((s) => s.id === id)) {
+        console.error(`Unknown scene "${id}". Use --list.`);
+        continue;
       }
-      const el = (Date.now() - t0) / 1000;
-      const fps = r.frame / Math.max(el, 1e-3);
-      process.stdout.write(`\r  frame ${r.frame}/${r.total}  ${fps.toFixed(1)} fps  eta ${((r.total - r.frame) / Math.max(fps, 1e-3)).toFixed(0)} s   `);
-      if (r.done) break;
+      const file = path.resolve(root, o.out, `${id}${o.seed !== 1 ? `-seed${o.seed}` : ''}-${width}x${height}-${o.fps}fps.mp4`);
+      const info = await page.evaluate((a) => window.gravitas.beginClip(a), {
+        scene: id,
+        seed: o.seed,
+        width,
+        height,
+        fps: o.fps,
+        duration: o.duration,
+        captions: o.captions,
+        handle: o.handle,
+      });
+      console.log(`\n▶ ${info.title} → ${path.relative(root, file)} (${width}×${height} @ ${o.fps} fps, ~${(info.total / o.fps).toFixed(1)} s)`);
+      const ff = spawn(ffmpeg, [
+        '-y', '-hide_banner', '-loglevel', 'error',
+        '-f', 'image2pipe', '-framerate', String(o.fps), '-i', '-',
+        '-c:v', 'libx264', '-preset', o.preset, '-crf', String(o.crf),
+        '-vf', 'scale=out_color_matrix=bt709:out_range=tv,format=yuv420p',
+        '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709',
+        '-movflags', '+faststart', '-r', String(o.fps), file,
+      ], { stdio: ['pipe', 'inherit', 'inherit'] });
+      let ffError = null;
+      const exited = new Promise((res, rej) => {
+        ff.on('error', (e) => rej((ffError = new Error(`Could not start ffmpeg (${ffmpeg}): ${e.message}. Install ffmpeg or set FFMPEG_PATH.`))));
+        ff.on('close', (code) => (code === 0 ? res() : rej((ffError = new Error(`ffmpeg exited with code ${code}`)))));
+      });
+      exited.catch(() => {});
+      ff.stdin.on('error', (e) => (ffError ??= new Error(`ffmpeg stopped accepting frames: ${e.message}`)));
+      const t0 = Date.now();
+      for (;;) {
+        const r = await page.evaluate(({ n, jpeg }) => window.gravitas.nextFrames(n, jpeg ? 'image/jpeg' : 'image/png', 0.95), { n: 4, jpeg: o.jpeg });
+        for (const url of r.frames) {
+          if (ffError) throw ffError;
+          const buf = Buffer.from(url.slice(url.indexOf(',') + 1), 'base64');
+          if (!ff.stdin.write(buf)) await Promise.race([new Promise((res) => ff.stdin.once('drain', res)), exited]);
+        }
+        const el = (Date.now() - t0) / 1000;
+        const fps = r.frame / Math.max(el, 1e-3);
+        process.stdout.write(`\r  frame ${r.frame}/${r.total}  ${fps.toFixed(1)} fps  eta ${((r.total - r.frame) / Math.max(fps, 1e-3)).toFixed(0)} s   `);
+        if (r.done) break;
+      }
+      ff.stdin.end();
+      await exited;
+      console.log(`\n  ✓ ${path.relative(root, file)} (${(fs.statSync(file).size / 1e6).toFixed(1)} MB)`);
     }
-    ff.stdin.end();
-    await exited;
-    console.log(`\n  ✓ ${path.relative(root, file)} (${(fs.statSync(file).size / 1e6).toFixed(1)} MB)`);
+  } finally {
+    await browser?.close().catch(() => {});
+    await server.close().catch(() => {});
   }
-  await browser.close();
-  await server.close();
 }
 
 main().catch((e) => {

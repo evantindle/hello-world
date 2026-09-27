@@ -175,6 +175,7 @@ export function mountUI(app: App) {
 
   // ---- wiring ----
   playBtn.onclick = () => {
+    if (app.busy) return;
     if (app.runtime) app.runtime.paused = !app.runtime.paused;
     sync();
   };
@@ -188,6 +189,10 @@ export function mountUI(app: App) {
     sync();
   };
   capInput.onchange = () => {
+    if (app.busy) {
+      capInput.checked = app.captions;
+      return;
+    }
     app.captions = capInput.checked;
     app.overlay.enabled = app.captions;
   };
@@ -201,6 +206,7 @@ export function mountUI(app: App) {
   };
 
   stillBtn.onclick = async () => {
+    if (app.busy) return;
     try {
       const still = await renderStill(app, app.aspect.w, app.aspect.h);
       const outcome = await download(still.blob, still.filename);
@@ -211,6 +217,7 @@ export function mountUI(app: App) {
   };
 
   recBtn.onclick = () => {
+    if (app.busy) return;
     if (!supportsExport()) {
       showToast('This browser cannot encode video. Use Chrome / Edge / Safari 17+, or `npm run render`.', 5000);
       return;
@@ -227,6 +234,7 @@ export function mountUI(app: App) {
     else modal.classList.remove('open');
   };
   goBtn.onclick = async () => {
+    if (app.busy) return;
     const f = Number(resSel.value);
     const w = Math.round((app.aspect.w * f) / 2) * 2;
     const h = Math.round((app.aspect.h * f) / 2) * 2;
@@ -304,6 +312,11 @@ export function mountUI(app: App) {
   // ---- keyboard ----
   window.addEventListener('keydown', (e) => {
     if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'SELECT') return;
+    if (app.busy) {
+      // While a clip renders, only Escape (cancel) is live.
+      if (e.key === 'Escape' && abort) abort.abort();
+      return;
+    }
     const idx = SCENES.indexOf(app.scene);
     switch (e.key) {
       case ' ':

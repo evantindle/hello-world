@@ -206,7 +206,7 @@ export const tidalDisruption: SceneDef = {
       sky: BH_SKY,
       post: { bloomStrength: 0.85 },
       camera: { elevation: 34, orbitSpeed: -1.8, margin: 1.2, minRadius: 21, holdTime: 3, zoomIn: 0.5, fov: 36 },
-      director: { baseRate: 16, maxScreenSpeed: 0.5, minRate: 0.1, startHold: 1.5, easeIn: 1.5, outro: 12 },
+      director: { baseRate: 16, maxScreenSpeed: 0.5, minRate: 0.1, startHold: 1.5, easeIn: 1.5, outro: 20 },
       shutter: 0.6,
       captions: [
         { at: 0.5, text: 'Black holes', duration: 5.5, kind: 'kicker' },
@@ -222,7 +222,6 @@ export const tidalDisruption: SceneDef = {
           g.release = 1;
           rt.markEvent('disrupt');
           rt.resolve('disrupt');
-          rt.endAt = rt.clock + 20;
           rt.vfx.flash(rt.clock, [...star.x] as V3, [1, 0.85, 0.6], 3, 8, 1.6, 3, 1);
           rt.director.slowmo(rt.clock, 0.35, 1.2, 0.3, 2.0);
           rt.camera.addShake(0.35);

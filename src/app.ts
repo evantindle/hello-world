@@ -65,6 +65,8 @@ export class App {
   }
 
   load(scene: SceneDef, seed = this.seed) {
+    // The renderer is shared with an export in progress: never swap scenes underneath it.
+    if (this.busy) return;
     this.scene = scene;
     this.seed = seed;
     this.runtime = new Runtime(this.renderer, this.overlay, scene, { seed, captions: this.captions });
