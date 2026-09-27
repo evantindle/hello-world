@@ -328,7 +328,7 @@ export const rogueBlackHole: SceneDef = {
   blurb: 'A black hole twice the mass of the Sun passes through the planets. Who survives?',
   category: 'Black Holes',
   build(): SceneSetup {
-    const w = new World({ c: 5, collisions: true, closeFactor: 0, ejectFactor: 3, rtol: 1e-11 });
+    const w = new World({ c: 3.6, collisions: true, closeFactor: 0, ejectFactor: 3, rtol: 1e-11 });
     const sun = w.add({ kind: 'star', name: 'Sun', m: 1, x: [0, 0, 0], v: [0, 0, 0], radius: 0.16, collide: 0.1, color: blackbody(5600), intensity: 1.3, spikes: 0.7, trail: { fade: 12, maxAge: 40, width: 0.02, intensity: 0.5, core: 0.3 }, canEject: false });
     const planets: { name: string; r: number; m: number; size: number; col: string }[] = [
       { name: 'Mercury', r: 0.75, m: 2e-7, size: 0.025, col: '#b9b2a8' },
@@ -356,13 +356,13 @@ export const rogueBlackHole: SceneDef = {
         color,
         intensity: 0.35,
         track: false,
-        trail: { fade: 2 * Math.PI * Math.pow(pl.r, 1.5) * 0.35, maxAge: 60, width: 0.018, intensity: 0.9, core: 0.35, color },
+        trail: { fade: 2 * Math.PI * Math.pow(pl.r, 1.5) * 0.7, maxAge: 80, width: 0.02, intensity: 1.1, core: 0.4, color },
       });
     });
     // The intruder: 2 solar masses, arriving at 0.35 (≈ 10 km/s-ish in these units) toward a 2.4 AU pass.
     const Mbh = 2;
     const rel = hyperbolicApproach(1 + Mbh, 0.35, 2.4, 22);
-    const bh = w.add({ kind: 'blackhole', name: 'BH', m: Mbh, x: rel.x, v: rel.v, ring: 0.4, track: false, canEject: false, trail: { fade: 20, maxAge: 60, width: 0.03, intensity: 0.4, core: 0.2, color: [0.6, 0.7, 1] } });
+    const bh = w.add({ kind: 'blackhole', name: 'BH', m: Mbh, x: rel.x, v: rel.v, ring: 0.9, track: false, canEject: false, trail: { fade: 20, maxAge: 60, width: 0.035, intensity: 0.8, core: 0.3, color: [0.6, 0.7, 1] } });
     w.centerOfMassFrame();
 
     const belt = (name: string, rIn: number, rOut: number, count: number, seed: number): ParticleGroupSpec => ({
@@ -372,10 +372,10 @@ export const rogueBlackHole: SceneDef = {
       colorMode: 'lit',
       color: hex('#8a7a6a'),
       color2: hex('#6a7a9a'),
-      size: 0.012,
-      intensity: 0.06,
-      ambient: 0.05,
-      lightSoftening: 0.4,
+      size: 0.014,
+      intensity: 0.22,
+      ambient: 0.1,
+      lightSoftening: 0.9,
       streak: 0.5,
       init: diskInit({ seed, center: sun.x, vel: sun.v, M: 1, rIn, rOut, thickness: 0.03, p: 1, jitter: 0.02 }),
     });
@@ -385,10 +385,10 @@ export const rogueBlackHole: SceneDef = {
     return {
       worlds: [w],
       duration: 55,
-      c: 5,
+      c: 3.6,
       particles: [belt('asteroids', 2.6, 3.3, 70000, 5), belt('kuiper', 9.0, 11.5, 70000, 6), sparks(12000, 3, 0.02, 2)],
       sky: { ...BH_SKY, exposure: 1 },
-      camera: { elevation: 48, orbitSpeed: 1.2, margin: 1, minRadius: 10.5, holdTime: 6, zoomIn: 0.25, zoomOut: 0.8, pan: 0.6, fov: 38 },
+      camera: { elevation: 50, orbitSpeed: 1.2, margin: 1, minRadius: 8.6, holdTime: 6, zoomIn: 0.25, zoomOut: 0.8, pan: 2.4, fov: 38 },
       director: { baseRate: 2.4, maxScreenSpeed: 0, startHold: 1.4, easeIn: 1.5, outro: 7 },
       shutter: 0.5,
       trailSpacing: 0.01,
