@@ -17,7 +17,7 @@ function star(name: string, m: number, x: V3, v: V3, color: RGB, radius: number,
 }
 
 /** Faint dust nebula lit by the stars; gets stirred into streamers by their gravity. */
-function litDust(opts: { M: number; rIn: number; rOut: number; count?: number; size?: number; intensity?: number; seed?: number; soft?: number; ambient?: number; thickness?: number }): ParticleGroupSpec {
+function litDust(opts: { M: number; rIn: number; rOut: number; count?: number; size?: number; intensity?: number; seed?: number; soft?: number; orbitSoft?: number; ambient?: number; thickness?: number }): ParticleGroupSpec {
   return {
     name: 'dust',
     count: opts.count ?? 120000,
@@ -35,6 +35,8 @@ function litDust(opts: { M: number; rIn: number; rOut: number; count?: number; s
       M: opts.M,
       rIn: opts.rIn,
       rOut: opts.rOut,
+      // Softened rotation curve: inside the stars' orbits the mass is spread out, not all central.
+      soft: opts.orbitSoft,
       thickness: opts.thickness ?? 0.05,
       p: 0.8,
       jitter: 0.05,
@@ -64,7 +66,7 @@ export const figureEight: SceneDef = {
       duration: 24,
       particles: [
         ...embers(w, { count: 5000, life: 0.9, speed: 0.025, size: 0.004, intensity: 2.0, gravity: 0.1 }),
-        litDust({ M: 3, rIn: 0.04, rOut: 2.6, count: 220000, size: 0.012, intensity: 0.022, ambient: 0.05 }),
+        litDust({ M: 3, rIn: 0.04, rOut: 2.6, orbitSoft: 0.8, count: 220000, size: 0.012, intensity: 0.022, ambient: 0.05 }),
       ],
       camera: { elevation: 38, orbitSpeed: 3, margin: 1.25, holdTime: 8 },
       director: { baseRate: 1.1, maxScreenSpeed: 2.5, startHold: 1.5, easeIn: 1.5 },
