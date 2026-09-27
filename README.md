@@ -28,7 +28,7 @@ Pick a scene, press **Export MP4**, and get a frame-perfect 1080×1920 / 60 fps 
 | **Cold Collapse** (`collapse`, seeded) | 24 stars released from rest fall together | A flash at maximum compression, then they burst outward like fireworks; the clip counts how many escape |
 | **Anatomy of a Black Hole** (`black-hole`) | A Gargantua-style accretion disk: the far side of the disk is lensed over the shadow, one side is Doppler-boosted | A slow push-in beauty shot |
 | **Two Black Holes Collide** (`bh-merger`) | Two black holes with their own disks spiral in, radiating gravitational waves (visible as a spiral ripple in spacetime that chirps faster and faster) | Merger flash, gravitational-wave burst, recoil kick |
-| **Spaghettification** (`tde`) | A star on a parabolic orbit is tidally stretched and ripped into a stream | Half the debris falls back into a glowing ring; the rest is flung away |
+| **Spaghettification** (`tde`) | A star on a parabolic orbit is tidally stretched and ripped into a stream | A time-lapse shows half the debris falling back into a glowing ring while the rest is flung away |
 | **Three Become One** (`bh-triple`, seeded) | A third black hole crashes into a binary | Two successive mergers leave one survivor |
 | **Rogue Black Hole** (`rogue`) | A black hole of two solar masses passes through the solar system, shredding the asteroid and Kuiper belts | Planets are swallowed, stolen or flung into interstellar space; the ending tallies who is left |
 | **When Galaxies Collide** (`galaxies`) | Two spirals (~440k stars) pass each other, throwing out tidal tails | The cores sink together and merge; a quasar ignites |
@@ -109,13 +109,13 @@ src/
              trails.ts      ribbon trails from ring buffers in a float texture
              bodies.ts      stars, flashes, diffraction spikes
              post.ts        bloom mip chain, distortion, AgX tone mapping, grain
-  scenes/    threebody.ts, blackholes.ts, galaxies.ts, orbits.ts, helpers.ts
+  scenes/    threebody.ts, clusters.ts, blackholes.ts, galaxies.ts, orbits.ts, helpers.ts
   export/    recorder.ts    deterministic frame stepping + WebCodecs MP4 (Mediabunny)
 scripts/     render.mjs     CLI batch renderer (Playwright + ffmpeg)
              verify-physics.ts  numerical checks (npm test)
 ```
 
-**Physics.** Massive bodies are integrated in double precision with an adaptive Dormand–Prince 5(4) method (tolerances down to 1e-13). Every accepted step feeds the trails, so hairpin close encounters are sampled densely. Black-hole pairs lose energy through a drag term matched to Peters' quadrupole formula, which gives a real chirp. Mergers keep momentum, radiate a few percent of the mass and can add a recoil kick. `npm test` checks the published results: the figure-eight returns to its start after one period (error ~1e-11), the Šuvakov–Dmitrašinović orbits close, the Pythagorean problem ejects the mass-3 star at t≈59.7, and the inspiral time matches Peters' estimate to about 1%.
+**Physics.** Massive bodies are integrated in double precision with an adaptive Dormand–Prince 5(4) method (tolerances down to 1e-13). Every accepted step feeds the trails, so hairpin close encounters are sampled densely. Black-hole pairs lose energy through a drag term matched to Peters' quadrupole formula, which gives a real chirp. Mergers keep momentum, radiate a few percent of the mass and can add a recoil kick. `npm test` checks the published results: the figure-eight returns to its start after one period (error below 1e-8, energy drift ~1e-12), the Šuvakov–Dmitrašinović orbits close, the Pythagorean problem ejects the mass-3 star at t≈59.7, and the inspiral time matches Peters' estimate to about 1%.
 
 **Particles.** Massless tracers (dust, accretion disks, stellar debris, galaxy stars, jets, sparks) live entirely on the GPU. Each frame a fragment shader integrates every particle with kick-drift-kick leapfrog. Sub-steps are adaptive per particle, limited by the local dynamical time, so close passes don't produce numerical slingshots. Body positions are Hermite-interpolated across the frame. Black holes use a Paczyński–Wiita potential, so disks get a real inner edge (ISCO) and plunging gas. Disk colour comes from a temperature profile, relativistic Doppler beaming and gravitational redshift.
 
@@ -161,7 +161,7 @@ Then add it to `SCENES` in `src/scenes/index.ts`. Hooks: `onEvent(ev, rt)` (merg
 
 ## Determinism
 
-Clips are reproducible. The physics integrator takes its own adaptive steps and never sees frame boundaries; the renderer interpolates between steps for display. So a chaotic system (a random seed, the butterfly ensemble) plays out *exactly* the same in the live preview, a 30 fps export and a 60 fps export. `npm test` checks this with bitwise-identical event times under three different frame slicings.
+Clips are reproducible. The physics integrator takes its own adaptive steps and never sees frame boundaries; the renderer interpolates between steps for display. So a chaotic system (a random seed, the butterfly ensemble) plays out *exactly* the same in the live preview, a 30 fps export and a 60 fps export. `npm test` checks this by getting bitwise-identical event times from a steady 60 fps slicing and an irregular one.
 
 ## Requirements
 
