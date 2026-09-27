@@ -184,10 +184,10 @@ export const tidalDisruption: SceneDef = {
       intensity: 0.13,
       tempIn: 11000,
       rIn: 6,
-      falloff: 2.2,
-      ambient: 0.1,
+      falloff: 1.6,
+      ambient: 0.12,
       doppler: 0.9,
-      circularize: 0.06,
+      circularize: 0.15,
       circRadius: 3.2 * rp,
       streak: 1,
       init: () => {
@@ -198,6 +198,7 @@ export const tidalDisruption: SceneDef = {
     };
     let phase = 0;
     let fadeT = 0;
+    let timelapse = false;
     return {
       worlds: [w],
       duration: 40,
@@ -212,7 +213,7 @@ export const tidalDisruption: SceneDef = {
         { at: 0.5, text: 'Black holes', duration: 5.5, kind: 'kicker' },
         { at: 0.5, text: 'Spaghettification', sub: 'a star on a collision course', duration: 5.5, kind: 'title' },
         { on: 'disrupt', delay: 0.3, text: 'Torn apart', sub: 'tides stretch the star into a stream of gas', duration: 5, kind: 'caption' },
-        { on: 'disrupt', delay: 9, text: 'Half falls in', sub: 'the rest is flung back into space', duration: 5.5, kind: 'caption' },
+        { on: 'timelapse', delay: 0.4, text: 'Weeks later', sub: 'half the star falls back into a blazing ring · the rest escapes', duration: 6, kind: 'caption' },
       ],
       onFrame: (rt, dt) => {
         const g = rt.renderer.particles.group('star');
@@ -229,11 +230,20 @@ export const tidalDisruption: SceneDef = {
           phase = 2;
           g.spec.host = bh;
         }
+        if (phase >= 1 && !timelapse && rt.clock > (rt.eventTimes.get('disrupt') ?? Infinity) + 6) {
+          // Time-lapse: bound debris takes "weeks" to fall back; speed up so the ring forms on screen.
+          timelapse = true;
+          rt.director.cfg.baseRate = 48;
+          rt.director.cfg.maxScreenSpeed = 1.4;
+          rt.markEvent('timelapse');
+        }
         if (phase >= 1 && star.alive) {
           fadeT += dt;
           star.intensity = Math.max(0, 0.55 * (1 - fadeT / 0.8));
           if (fadeT > 0.8) rt.primary.remove(star);
         }
+        // Returning gas is shock-heated as it circularises: let the ring blaze.
+        if (timelapse) g.gain += (2.8 - g.gain) * Math.min(1, dt * 0.7);
         // The photon ring lights up as debris starts to circle the hole.
         const target = phase === 0 ? 0.12 : Math.min(1.1, 0.12 + (rt.clock - (rt.eventTimes.get('disrupt') ?? rt.clock)) * 0.12);
         bh.ring += (target - bh.ring) * Math.min(1, dt * 2);
