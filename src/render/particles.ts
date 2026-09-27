@@ -18,10 +18,16 @@ export type ColorMode = 'fixed' | 'ember' | 'disk' | 'debris' | 'star' | 'jet' |
 const MODE_ID: Record<ParticleMode, number> = { free: 0, emitter: 1, disk: 2, rigid: 3, jet: 4, burst: 0 };
 const COLOR_ID: Record<ColorMode, number> = { fixed: 0, ember: 1, disk: 2, debris: 3, star: 4, jet: 5, gradient: 6, lit: 7 };
 
+/** Initial age of particles present from the first frame: past every colour mode's fade-in. */
+const BORN_AGE = 1;
+
 export interface ParticleInit {
   x: V3;
   v: V3;
-  /** Sim-time age (negative = dormant until then). */
+  /**
+   * Sim-time age (negative = dormant until then). Defaults to already born, so the fade-in
+   * that hides respawns doesn't blank the first frames while the director holds time still.
+   */
   age?: number;
   /** Lifetime (0 = forever). */
   life?: number;
@@ -627,7 +633,7 @@ export class ParticleSystem {
             p.x = [s.host.x[0] + p.v[0], s.host.x[1] + p.v[1], s.host.x[2] + p.v[2]];
           }
           pos[o] = p.x[0]; pos[o + 1] = p.x[1]; pos[o + 2] = p.x[2];
-          pos[o + 3] = p.age ?? 0;
+          pos[o + 3] = p.age ?? BORN_AGE;
           vel[o] = p.v[0]; vel[o + 1] = p.v[1]; vel[o + 2] = p.v[2];
           vel[o + 3] = p.life ?? 0;
           if (p.size !== undefined) attr[o + 2] = p.size;

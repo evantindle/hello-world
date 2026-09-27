@@ -193,7 +193,7 @@ export const tidalDisruption: SceneDef = {
       init: () => {
         const d = rng.unitVector();
         const r = Rstar * Math.pow(rng.next(), 0.55);
-        return { x: [0, 0, 0], v: [d[0] * r, d[1] * r, d[2] * r], param: 4300 + 2200 * (1 - r / Rstar) + rng.normal() * 250, age: 0 };
+        return { x: [0, 0, 0], v: [d[0] * r, d[1] * r, d[2] * r], param: 4300 + 2200 * (1 - r / Rstar) + rng.normal() * 250 };
       },
     };
     let phase = 0;

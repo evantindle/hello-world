@@ -126,7 +126,7 @@ export function diskInit(opts: {
       cv[1] + th[1] * vt * sign + rh[1] * vr + n[1] * vz,
       cv[2] + th[2] * vt * sign + rh[2] * vr + n[2] * vz,
     ];
-    return { x: pos, v: vel, param: opts.param ? opts.param(R, phi, rng, inArm) : rng.next(), size: opts.size ? opts.size(R, rng) : undefined, age: 0 };
+    return { x: pos, v: vel, param: opts.param ? opts.param(R, phi, rng, inArm) : rng.next(), size: opts.size ? opts.size(R, rng) : undefined };
   };
 }
 
