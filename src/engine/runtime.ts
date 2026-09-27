@@ -4,7 +4,7 @@
 
 import { mix as mixc } from '../core/color.ts';
 import { dist, project, type RGB, type V3 } from '../core/math.ts';
-import type { Body, World, WorldEvent } from '../physics/world.ts';
+import type { Body, StepSnapshot, World, WorldEvent } from '../physics/world.ts';
 import type { SpriteInstance } from '../render/bodies.ts';
 import { MAX_LENS } from '../render/glsl.ts';
 import { B_CRIT } from '../render/lensing.ts';
@@ -106,7 +106,7 @@ export class Runtime {
     }
 
     for (const w of this.worlds) {
-      w.onStep = (world) => this.recordTrails(world);
+      w.onStep = (_world, snap) => this.recordStep(snap);
       this.recordTrails(w);
     }
     const f = this.framing();
@@ -118,17 +118,35 @@ export class Runtime {
     this.spin.set(b, axis);
   }
 
+  private trailFor(b: Body): Trail | null {
+    if (!b.trail) return null;
+    let t = this.trails.get(b);
+    if (!t) {
+      const created = this.renderer.trails.create(b, b.trail);
+      if (!created) return null;
+      t = created;
+      this.trails.set(b, t);
+    }
+    return t;
+  }
+
+  /** Trail samples at every integrator step (dense through close encounters). */
+  private recordStep(snap: StepSnapshot) {
+    for (let j = 0; j < snap.bodies.length; j++) {
+      const b = snap.bodies[j];
+      if (!b.alive) continue;
+      const t = this.trailFor(b);
+      if (!t) continue;
+      const o = 3 * j;
+      t.record([snap.x[o], snap.x[o + 1], snap.x[o + 2]], [snap.v[o], snap.v[o + 1], snap.v[o + 2]], snap.t, this.trailSpacing);
+    }
+  }
+
+  /** Trail live heads follow the displayed (interpolated) body positions. */
   private recordTrails(w: World) {
     for (const b of w.bodies) {
-      if (!b.trail) continue;
-      let t = this.trails.get(b);
-      if (!t) {
-        const created = this.renderer.trails.create(b, b.trail);
-        if (!created) continue;
-        t = created;
-        this.trails.set(b, t);
-      }
-      t.record(b.x, b.v, w.t, this.trailSpacing);
+      const t = this.trailFor(b);
+      if (t) t.record(b.x, b.v, w.t, this.trailSpacing);
     }
   }
 
@@ -205,12 +223,15 @@ export class Runtime {
     const before = new Map<Body, { x: V3; v: V3 }>();
     for (const b of this.primary.bodies) before.set(b, { x: [...b.x] as V3, v: [...b.v] as V3 });
 
+    const t0 = this.primary.t;
     if (simDt > 0) {
       for (const w of this.worlds) {
         w.advance(simDt);
         this.recordTrails(w);
       }
     }
+    const advanced = this.primary.t - t0;
+    this.lastSimDt = advanced;
 
     for (const w of this.worlds) {
       for (const ev of w.events) {
@@ -220,19 +241,19 @@ export class Runtime {
       w.events.length = 0;
     }
 
-    if (simDt > 0 && !this.skipParticles) {
+    if (advanced > 0 && !this.skipParticles) {
       const frames: BodyFrame[] = [];
       for (const b of this.primary.bodies) {
         const s = before.get(b);
         frames.push({
           body: b,
-          x0: s ? s.x : ([b.x[0] - b.v[0] * simDt, b.x[1] - b.v[1] * simDt, b.x[2] - b.v[2] * simDt] as V3),
+          x0: s ? s.x : ([b.x[0] - b.v[0] * advanced, b.x[1] - b.v[1] * advanced, b.x[2] - b.v[2] * advanced] as V3),
           v0: s ? s.v : b.v,
           x1: b.x,
           v1: b.v,
         });
       }
-      this.renderer.particles.update(frames, simDt);
+      this.renderer.particles.update(frames, advanced);
     }
 
     const f = this.framing();

@@ -220,8 +220,8 @@ export function mountUI(app: App) {
       });
       progBar.style.width = '100%';
       status.textContent = `Done: ${res.seconds.toFixed(1)} s of ${res.codec.toUpperCase()} video (${(res.blob.size / 1e6).toFixed(1)} MB).`;
-      download(res.blob, res.filename);
-      showToast(`Saved ${res.filename}`);
+      const outcome = await download(res.blob, res.filename);
+      showToast(outcome === 'saved' ? `Saved ${res.filename}` : 'Download cancelled');
       setTimeout(() => modal.classList.remove('open'), 1200);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

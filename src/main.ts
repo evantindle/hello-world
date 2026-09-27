@@ -35,7 +35,7 @@ try {
     sceneById,
     scenes: () => SCENES.map((s) => ({ id: s.id, title: s.title, category: s.category, seeded: !!s.seeded })),
     async beginClip(o: { scene: string; seed?: number; width: number; height: number; fps: number; duration?: number; captions?: boolean; handle?: string }) {
-      await document.fonts?.ready;
+      await app.overlay.fontsReady;
       app.captions = o.captions ?? true;
       app.overlay.handle = o.handle ?? '';
       app.seed = o.seed ?? 1;

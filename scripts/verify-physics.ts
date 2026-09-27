@@ -2,6 +2,7 @@
 // Run: npm test   (Node >= 22.18 runs TypeScript directly)
 import { World } from '../src/physics/world.ts';
 import { PERIODIC_ORBITS } from '../src/scenes/orbits.ts';
+import { randomChaos } from '../src/scenes/threebody.ts';
 
 let failures = 0;
 function check(name: string, ok: boolean, detail: string) {
@@ -77,6 +78,24 @@ for (const orbit of PERIODIC_ORBITS) {
   const c5 = Math.pow(1.5, 5);
   const peters = (5 / 256) * Math.pow(a, 4) * c5 / (m1 * m2 * M);
   check('bbh inspiral merges', merged > 0 && Math.abs(merged - peters) / peters < 0.35, `merged at t=${merged.toFixed(1)} (Peters estimate ${peters.toFixed(1)}), final mass ${w.bodies[0]?.m.toFixed(3)}`);
+}
+
+// 4. Determinism: chaotic evolution must not depend on how time is sliced into frames
+//    (a 60 fps export and an irregular live preview must tell the same story).
+{
+  const firstEvent = (dts: number[]) => {
+    const w = randomChaos.build({ seed: 7 }).worlds[0];
+    let i = 0;
+    while (w.t < 120) {
+      w.advance(dts[i++ % dts.length]);
+      for (const e of w.events) if (e.type === 'merge' || e.type === 'eject') return `${e.type}@${e.t}`;
+      w.events.length = 0;
+    }
+    return 'none';
+  };
+  const a = firstEvent([1 / 60]);
+  const b = firstEvent([1 / 23, 1 / 71, 0.013]);
+  check('frame-rate independence', a === b && a !== 'none', `${a} vs ${b}`);
 }
 
 if (failures) {

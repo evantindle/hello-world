@@ -81,6 +81,7 @@ export async function exportClip(
   const source = new CanvasSource(app.canvas, { codec, quality: new Quality({ bitrate, bitrateMode: 'variable' }), keyFrameInterval: 2, latencyMode: 'quality' });
   output.addVideoTrack(source, { frameRate: fps });
   await output.start();
+  await app.overlay.fontsReady;
 
   app.busy = true;
   const session = new ClipSession(app, opts);
@@ -117,7 +118,25 @@ export async function exportClip(
   };
 }
 
-export function download(blob: Blob, filename: string) {
+/**
+ * Hand the finished video to the viewer. Inside a claude.ai artifact the page cannot start a
+ * download itself, so it asks the host through the `downloads` capability; everywhere else a
+ * normal browser download is used.
+ */
+export async function download(blob: Blob, filename: string): Promise<'saved' | 'declined'> {
+  const host = (window as any).claude;
+  if (host?.use) {
+    const downloads = await host.use('downloads').catch(() => null);
+    if (downloads) {
+      try {
+        await downloads.save({ filename, data: blob });
+        return 'saved';
+      } catch (e: any) {
+        if (e?.code === 'declined') return 'declined';
+        throw new Error(e?.message ?? 'The download was refused.');
+      }
+    }
+  }
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -126,4 +145,5 @@ export function download(blob: Blob, filename: string) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 10000);
+  return 'saved';
 }

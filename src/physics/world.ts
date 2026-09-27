@@ -97,6 +97,15 @@ export type WorldEvent =
   | { type: 'eject'; t: number; body: Body; speed: number }
   | { type: 'periapsis'; t: number; a: Body; b: Body; r: number; relSpeed: number };
 
+/** State of every body at one integrator step (used for trails and display interpolation). */
+export interface StepSnapshot {
+  t: number;
+  bodies: Body[];
+  /** Flat xyz per body, aligned with `bodies`. */
+  x: Float64Array;
+  v: Float64Array;
+}
+
 export interface MergeOverride {
   /** Customise the merged body; return partial overrides. */
   (a: Body, b: Body, init: BodyInit): BodyInit;
@@ -144,7 +153,10 @@ export class World {
   /** Every body ever created, including merged-away ones (renderer keeps fading their trails). */
   history: Body[] = [];
   events: WorldEvent[] = [];
-  onStep: ((w: World, h: number) => void) | null = null;
+  /** Called for each integrator step once the display time has reached it (chronological). */
+  onStep: ((w: World, snap: StepSnapshot) => void) | null = null;
+  /** Integration time; runs up to one natural step ahead of the display time `t`. */
+  tInt = 0;
   onMerge: MergeOverride | null = null;
   /** Called after a merge so scenes can apply kicks etc. */
   afterMerge: ((result: Body, a: Body, b: Body) => void) | null = null;
@@ -159,6 +171,9 @@ export class World {
   private pairR: Float64Array = new Float64Array(0);
   private pairDr: Float64Array = new Float64Array(0);
   private dirty = true;
+  private snapPrev: StepSnapshot | null = null;
+  private snapCur: StepSnapshot | null = null;
+  private pending: StepSnapshot[] = [];
 
   constructor(opts: WorldOptions = {}) {
     this.G = opts.G ?? 1;
@@ -212,7 +227,7 @@ export class World {
       escaping: false,
       mergedInto: null,
       rs,
-      born: this.t,
+      born: this.tInt,
     };
     this.bodies.push(b);
     this.history.push(b);
@@ -291,9 +306,50 @@ export class World {
       }
     this.integ.reset(6 * n);
     this.dirty = false;
+    // State changed discontinuously (setup, merge, kick): restart display interpolation here.
+    this.snapCur = this.snapshot(this.tInt);
+    this.snapPrev = null;
   }
 
-  /** Pull integrator state back into body structs. */
+  private snapshot(t: number): StepSnapshot {
+    const n = this.bodies.length;
+    const x = new Float64Array(3 * n), v = new Float64Array(3 * n);
+    for (let i = 0; i < n; i++) {
+      const b = this.bodies[i];
+      x[3 * i] = b.x[0]; x[3 * i + 1] = b.x[1]; x[3 * i + 2] = b.x[2];
+      v[3 * i] = b.v[0]; v[3 * i + 1] = b.v[1]; v[3 * i + 2] = b.v[2];
+    }
+    return { t, bodies: this.bodies.slice(), x, v };
+  }
+
+  /** Set body structs to the display state at time t (cubic Hermite between integrator steps). */
+  private interpolateDisplay(t: number) {
+    const a = this.snapPrev, b = this.snapCur;
+    if (!b) return;
+    const H = a && b.t > a.t ? b.t - a.t : 0;
+    const s = H > 0 ? Math.min(1, Math.max(0, (t - a!.t) / H)) : 1;
+    const s2 = s * s, s3 = s2 * s;
+    const h00 = 2 * s3 - 3 * s2 + 1, h10 = s3 - 2 * s2 + s, h01 = -2 * s3 + 3 * s2, h11 = s3 - s2;
+    const d00 = (6 * s2 - 6 * s) / (H || 1), d10 = 3 * s2 - 4 * s + 1, d01 = (-6 * s2 + 6 * s) / (H || 1), d11 = 3 * s2 - 2 * s;
+    for (let j = 0; j < b.bodies.length; j++) {
+      const body = b.bodies[j];
+      if (!body.alive) continue;
+      const i = H > 0 ? a!.bodies.indexOf(body) : -1;
+      for (let k = 0; k < 3; k++) {
+        const xb = b.x[3 * j + k], vb = b.v[3 * j + k];
+        if (i < 0) {
+          body.x[k] = xb;
+          body.v[k] = vb;
+        } else {
+          const xa = a!.x[3 * i + k], va = a!.v[3 * i + k];
+          body.x[k] = h00 * xa + h10 * H * va + h01 * xb + h11 * H * vb;
+          body.v[k] = d00 * xa + d10 * va + d01 * xb + d11 * vb;
+        }
+      }
+    }
+  }
+
+  /** Pull integrator state (at tInt) back into body structs. */
   private pull() {
     if (this.dirty) return;
     const y = this.y;
@@ -356,27 +412,37 @@ export class World {
     }
   };
 
-  /** Integrate forward by dt sim-time units. Events accumulate in `events`. */
+  /**
+   * Advance the display time by dt. The integrator takes its own natural adaptive steps and
+   * runs up to one step ahead; bodies are Hermite-interpolated to the display time. Physics
+   * therefore never depends on how callers slice time into frames: a chaotic system plays
+   * out identically in a live preview and in a 30 or 60 fps export.
+   */
   advance(dt: number) {
     if (dt <= 0) return;
     if (this.dirty) this.rebuild();
-    const tEnd = this.t + dt;
+    const tReq = this.t + dt;
+    while (this.pending.length && this.pending[0].t <= tReq) {
+      const snap = this.pending.shift()!;
+      this.onStep?.(this, snap);
+    }
     let steps = 0;
-    while (this.t < tEnd) {
-      const remaining = tEnd - this.t;
-      if (remaining <= 1e-14 * Math.max(1, Math.abs(tEnd))) {
-        this.t = tEnd;
-        break;
-      }
-      const h = this.integ.step(this.t, this.y, remaining);
-      this.t = h >= remaining ? tEnd : this.t + h;
+    while (this.tInt < tReq) {
+      const h = this.integ.step(this.tInt, this.y, Infinity);
+      this.tInt += h;
       this.pull();
       this.detectPeriapsis();
       if (this.collisions && this.checkCollisions()) this.rebuild();
-      this.onStep?.(this, h);
+      this.checkEjections();
+      const snap = this.snapshot(this.tInt);
+      this.snapPrev = this.snapCur;
+      this.snapCur = snap;
+      if (snap.t <= tReq) this.onStep?.(this, snap);
+      else this.pending.push(snap);
       if (++steps >= this.maxStepsPerAdvance) break;
     }
-    this.checkEjections();
+    this.t = Math.min(tReq, this.tInt);
+    this.interpolateDisplay(this.t);
   }
 
   private detectPeriapsis() {
@@ -391,7 +457,7 @@ export class World {
         const dr = r - this.pairR[k];
         if (this.pairDr[k] < 0 && dr > 0 && r < this.closeFactor * R) {
           const rv = Math.hypot(a.v[0] - b.v[0], a.v[1] - b.v[1], a.v[2] - b.v[2]);
-          this.events.push({ type: 'periapsis', t: this.t, a, b, r, relSpeed: rv });
+          this.events.push({ type: 'periapsis', t: this.tInt, a, b, r, relSpeed: rv });
         }
         if (dr !== 0) this.pairDr[k] = dr;
         this.pairR[k] = r;
@@ -478,7 +544,7 @@ export class World {
     a.mergedInto = result;
     b.mergedInto = result;
     this.afterMerge?.(result, a, b);
-    this.events.push({ type: 'merge', t: this.t, a, b, result, pos: [...x] as V3, vel: [...result.v] as V3, relSpeed });
+    this.events.push({ type: 'merge', t: this.tInt, a, b, result, pos: [...x] as V3, vel: [...result.v] as V3, relSpeed });
   }
 
   private checkEjections() {
@@ -514,7 +580,7 @@ export class World {
       const outward = rx * vx + ry * vy + rz * vz > 0;
       if (E > 0 && outward && r > this.ejectFactor * Math.max(Rrest, 1e-6)) {
         b.escaping = true;
-        this.events.push({ type: 'eject', t: this.t, body: b, speed: Math.sqrt(2 * E) });
+        this.events.push({ type: 'eject', t: this.tInt, body: b, speed: Math.sqrt(2 * E) });
       }
     }
   }
@@ -522,6 +588,7 @@ export class World {
   /** Total energy (kinetic + potential, softened). Useful for tests. */
   energy(): number {
     if (this.dirty) this.rebuild();
+    this.pull();
     let K = 0, U = 0;
     const bs = this.bodies;
     for (let i = 0; i < bs.length; i++) {

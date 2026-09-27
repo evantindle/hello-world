@@ -118,7 +118,7 @@ void main() {
   } else {
     col = vCol * exp(-d * d * 1.5);
   }
-  float edge = smoothstep(1.0, 0.85, max(abs(vCorner.x), abs(vCorner.y)));
+  float edge = smoothstep(1.0, 0.8, length(vCorner));
   o = vec4(col * vI * edge * shadowOcclusion(vBehind), 0.0);
 }`;
 

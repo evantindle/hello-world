@@ -63,8 +63,8 @@ export const figureEight: SceneDef = {
       worlds: [w],
       duration: 24,
       particles: [
-        ...embers(w, { count: 6000, life: 1.6, speed: 0.06, size: 0.004, intensity: 1.6 }),
-        litDust({ M: 3, rIn: 0.25, rOut: 2.6, count: 160000, size: 0.008, intensity: 0.035, ambient: 0.08 }),
+        ...embers(w, { count: 5000, life: 0.9, speed: 0.025, size: 0.004, intensity: 2.0, gravity: 0.1 }),
+        litDust({ M: 3, rIn: 0.25, rOut: 2.6, count: 220000, size: 0.012, intensity: 0.022, ambient: 0.05 }),
       ],
       camera: { elevation: 38, orbitSpeed: 3, margin: 1.25, holdTime: 8 },
       director: { baseRate: 1.1, maxScreenSpeed: 2.5, startHold: 1.5, easeIn: 1.5 },
@@ -94,7 +94,7 @@ export const pythagorean: SceneDef = {
       worlds: [w],
       duration: 70,
       particles: [
-        ...embers(w, { count: 8000, life: 2.4, speed: 0.1, size: 0.01, intensity: 2.2 }),
+        ...embers(w, { count: 6000, life: 0.9, speed: 0.045, size: 0.009, intensity: 2.4, gravity: 0.1 }),
       ],
       camera: { elevation: 58, orbitSpeed: 1.6, margin: 1.32, holdTime: 4, azimuth: -90, minRadius: 1.6 },
       director: { baseRate: 2.8, maxScreenSpeed: 1.15, minRate: 0.05, startHold: 3.2, easeIn: 1.8, outro: 7, ejectFollow: 3.5 },
@@ -142,7 +142,7 @@ export const lagrangeCollapse: SceneDef = {
       worlds: [w],
       duration: 40,
       particles: [
-        ...embers(w, { count: 7000, life: 1.8, speed: 0.06, size: 0.0045, intensity: 2.2 }),
+        ...embers(w, { count: 5000, life: 0.8, speed: 0.025, size: 0.0045, intensity: 2.4, gravity: 0.1 }),
       ],
       camera: { elevation: 50, orbitSpeed: -2, margin: 1.3, holdTime: 3, minRadius: 1.1 },
       director: { baseRate: 2.4, maxScreenSpeed: 1.3, startHold: 2.2, easeIn: 1.5, outro: 6 },
@@ -181,7 +181,7 @@ function periodicScene(id: string, orbitId: string, title: string, blurb: string
       return {
         worlds: [w],
         duration: clip,
-        particles: [...embers(w, { count: 5000, life: 1.4, speed: 0.05, size: 0.0035, intensity: 1.4 })],
+        particles: [],
         camera: { elevation: 78, orbitSpeed: 1.2, wobble: 3, margin: 1.15, holdTime: 30, minRadius: 0.8 },
         director: { baseRate, maxScreenSpeed: 3.5, minRate: 0.08, startHold: 1.8, easeIn: 1.2 },
         trailSpacing: 0.002,
@@ -223,22 +223,36 @@ export const butterflyEffect: SceneDef = {
       base.forEach((b, k) => {
         const x: V3 = [...b.x];
         if (k === 0) x[0] += (i - N / 2) * 1e-9;
-        w.add(star(`u${i}b${k}`, b.m, x, [...b.v], col, 0.03 * Math.cbrt(b.m), { trail, intensity: 0.22, spikes: 0, canEject: false }));
+        w.add(star(`u${i}b${k}`, b.m, x, [...b.v], col, 0.03 * Math.cbrt(b.m), { trail, intensity: 0.06, spikes: 0, canEject: false }));
       });
       worlds.push(w);
     }
+    let diverged = false;
     return {
       worlds,
-      duration: 42,
+      duration: 60,
       camera: { elevation: 62, orbitSpeed: 1.2, margin: 1.12, holdTime: 3, minRadius: 2.2 },
-      director: { baseRate: 2.1, maxScreenSpeed: 1.2, minRate: 0.08, startHold: 3, easeIn: 1.5 },
+      director: { baseRate: 3.1, maxScreenSpeed: 1.3, minRate: 0.08, startHold: 3, easeIn: 1.5, outro: 9 },
       trailSpacing: 0.01,
       captions: [
         { at: 0.4, text: 'The Butterfly Effect', sub: '48 universes · identical to one part in a billion', duration: 5.5, kind: 'title' },
         { at: 0.4, text: 'Three-body problem', duration: 5.5, kind: 'kicker' },
-        { at: 17, text: 'They all agree…', sub: 'for a while', duration: 4, kind: 'caption' },
-        { at: 30, text: 'Chaos', sub: 'tiny differences grow exponentially', duration: 5, kind: 'caption' },
+        { at: 12, text: 'They all agree…', sub: 'every universe follows the same path', duration: 4.5, kind: 'caption' },
+        { on: 'diverge', delay: 0.2, text: 'Until they don\'t', sub: 'a billionth of a difference · 48 different fates', duration: 6, kind: 'caption' },
       ],
+      onFrame: (rt) => {
+        if (diverged) return;
+        const ref = rt.worlds[0].bodies;
+        let maxd = 0;
+        for (const w of rt.worlds)
+          for (let b = 0; b < 3; b++) maxd = Math.max(maxd, Math.hypot(w.bodies[b].x[0] - ref[b].x[0], w.bodies[b].x[1] - ref[b].x[1]));
+        if (maxd > 0.25) {
+          diverged = true;
+          rt.markEvent('diverge');
+          rt.resolve('diverge');
+          rt.director.slowmo(rt.clock, 0.25, 1.2, 0.3, 2.5);
+        }
+      },
     };
   },
 };
@@ -298,8 +312,8 @@ export const randomChaos: SceneDef = {
         for (const e of probe.events) if (e.type === 'eject' || e.type === 'merge') resolved = e.t;
         probe.events.length = 0;
       }
-      if (resolved > 12 && fallback < 0) fallback = s;
-      if (resolved > 12 && maxR < 5) found = true;
+      if (resolved > 18 && fallback < 0) fallback = s;
+      if (resolved > 18 && maxR < 5) found = true;
     }
     if (found) s -= 7919;
     else if (fallback >= 0) s = fallback;
@@ -308,7 +322,7 @@ export const randomChaos: SceneDef = {
     return {
       worlds: [w],
       duration: 75,
-      particles: [...embers(w, { count: 6000, life: 1.8, speed: 0.06, size: 0.0045, intensity: 1.5 }), sparks(24000, 4, 0.006)],
+      particles: [...embers(w, { count: 5000, life: 0.8, speed: 0.025, size: 0.0045, intensity: 2.2, gravity: 0.1 }), sparks(24000, 4, 0.006)],
       camera: { elevation: 55, orbitSpeed: 2, margin: 1.2, holdTime: 3.5, minRadius: 0.9 },
       director: { baseRate: 1.8, maxScreenSpeed: 1.15, startHold: 2.4, easeIn: 1.4, outro: 6 },
       captions: [

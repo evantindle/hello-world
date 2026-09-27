@@ -4,7 +4,9 @@
 import { smoothstep } from '../core/math.ts';
 import type { CaptionCue } from '../scenes/types.ts';
 
-export const FONT_STACK = `'Inter', 'Helvetica Neue', 'Segoe UI', Roboto, Arial, sans-serif`;
+/** Wide display face for titles; clean grotesk for everything else. Both self-hosted (see style.css). */
+export const DISPLAY_FONT = `'Syncopate', 'Manrope', 'Helvetica Neue', Arial, sans-serif`;
+export const FONT_STACK = `'Manrope', 'Helvetica Neue', 'Segoe UI', Roboto, Arial, sans-serif`;
 
 interface ActiveCaption {
   cue: CaptionCue;
@@ -30,10 +32,19 @@ export class Overlay {
   /** True when the last draw produced visible pixels. */
   visible = false;
   private lastSig = '';
+  /** Resolves once the caption fonts are usable (exports wait for it so frames are identical). */
+  readonly fontsReady: Promise<void>;
 
   constructor() {
     this.canvas = document.createElement('canvas');
     this.ctx = this.canvas.getContext('2d')!;
+    const fonts = (document as any).fonts;
+    this.fontsReady = fonts
+      ? Promise.all([fonts.load(`700 64px Syncopate`), fonts.load(`400 32px Manrope`), fonts.load(`600 32px Manrope`)]).then(
+          () => undefined,
+          () => undefined,
+        )
+      : Promise.resolve();
   }
 
   resize(w: number, h: number) {
@@ -64,16 +75,27 @@ export class Overlay {
     this.active = this.active.filter((a) => clock < a.t0 + a.cue.duration);
   }
 
-  private spaced(text: string, x: number, y: number, spacing: number, align: 'center' | 'left') {
+  /** Draw letter-spaced text; shrinks the font when the line would not fit in maxW. */
+  private spaced(text: string, x: number, y: number, spacingEm: number, align: 'center' | 'left', font: (px: number) => string, sizePx: number, maxW = Infinity) {
     const ctx = this.ctx;
     const chars = [...text];
-    const widths = chars.map((c) => ctx.measureText(c).width);
-    const total = widths.reduce((a, b) => a + b, 0) + spacing * (chars.length - 1);
-    let cx = align === 'center' ? x - total / 2 : x;
+    const measure = (px: number) => {
+      ctx.font = font(px);
+      const widths = chars.map((c) => ctx.measureText(c).width);
+      return { widths, total: widths.reduce((a, b) => a + b, 0) + spacingEm * px * (chars.length - 1) };
+    };
+    let px = sizePx;
+    let m = measure(px);
+    if (m.total > maxW) {
+      px = sizePx * (maxW / m.total);
+      m = measure(px);
+    }
+    let cx = align === 'center' ? x - m.total / 2 : x;
     chars.forEach((c, i) => {
       ctx.fillText(c, cx, y);
-      cx += widths[i] + spacing;
+      cx += m.widths[i] + spacingEm * px;
     });
+    return px;
   }
 
   /**
@@ -103,54 +125,50 @@ export class Overlay {
     const portrait = h > w;
     ctx.textBaseline = 'middle';
 
+    const maxW = w * 0.88;
+    const display = (px: number) => `700 ${px}px ${DISPLAY_FONT}`;
+    const body = (weight: number) => (px: number) => `${weight} ${px}px ${FONT_STACK}`;
     for (const { a, c, t } of items) {
       const cue = c.cue;
       const rise = (1 - smoothstep(0, 1.4, t)) * s * 0.012;
-      const track = 0.16 + 0.1 * smoothstep(0, cue.duration, t);
+      const track = 0.1 + 0.08 * smoothstep(0, cue.duration, t);
       if (cue.kind === 'title') {
         const y = h * (portrait ? 0.2 : 0.17) + rise;
-        const size = s * 0.058;
-        ctx.font = `600 ${size}px ${FONT_STACK}`;
+        const size = s * 0.05;
+        const text = cue.text.toUpperCase();
         ctx.fillStyle = `rgba(255,255,255,${a})`;
         ctx.shadowColor = `rgba(120,180,255,${0.55 * a})`;
         ctx.shadowBlur = size * 0.6;
-        this.spaced(cue.text.toUpperCase(), w / 2, y, size * track, 'center');
+        const px = this.spaced(text, w / 2, y, track, 'center', display, size, maxW);
         ctx.shadowBlur = 0;
-        this.spaced(cue.text.toUpperCase(), w / 2, y, size * track, 'center');
+        this.spaced(text, w / 2, y, track, 'center', display, size, maxW);
         if (cue.sub) {
-          const ss = size * 0.42;
-          ctx.font = `400 ${ss}px ${FONT_STACK}`;
           ctx.fillStyle = `rgba(200,220,255,${0.82 * a})`;
-          this.spaced(cue.sub, w / 2, y + size * 1.25, ss * 0.12, 'center');
+          this.spaced(cue.sub, w / 2, y + Math.max(px, size * 0.7) * 1.25, 0.08, 'center', body(500), size * 0.46, maxW);
         }
       } else if (cue.kind === 'kicker') {
         const y = h * (portrait ? 0.2 : 0.17) - s * 0.07 + rise;
-        const size = s * 0.026;
-        ctx.font = `500 ${size}px ${FONT_STACK}`;
         ctx.fillStyle = `rgba(150,200,255,${0.9 * a})`;
-        this.spaced(cue.text.toUpperCase(), w / 2, y, size * 0.45, 'center');
+        this.spaced(cue.text.toUpperCase(), w / 2, y, 0.42, 'center', body(600), s * 0.024, maxW);
       } else {
         const y = h * (portrait ? 0.74 : 0.8) + rise;
-        const size = s * 0.044;
-        ctx.font = `600 ${size}px ${FONT_STACK}`;
+        const size = s * 0.04;
+        const text = cue.text.toUpperCase();
         ctx.fillStyle = `rgba(255,255,255,${a})`;
         ctx.shadowColor = `rgba(255,170,90,${0.5 * a})`;
         ctx.shadowBlur = size * 0.7;
-        this.spaced(cue.text.toUpperCase(), w / 2, y, size * track, 'center');
+        const px = this.spaced(text, w / 2, y, track, 'center', display, size, maxW);
         ctx.shadowBlur = 0;
-        this.spaced(cue.text.toUpperCase(), w / 2, y, size * track, 'center');
+        this.spaced(text, w / 2, y, track, 'center', display, size, maxW);
         if (cue.sub) {
-          const ss = size * 0.48;
-          ctx.font = `400 ${ss}px ${FONT_STACK}`;
-          ctx.fillStyle = `rgba(220,230,255,${0.8 * a})`;
-          this.spaced(cue.sub, w / 2, y + size * 1.2, ss * 0.1, 'center');
+          ctx.fillStyle = `rgba(220,230,255,${0.82 * a})`;
+          this.spaced(cue.sub, w / 2, y + Math.max(px, size * 0.7) * 1.3, 0.06, 'center', body(500), size * 0.55, maxW);
         }
       }
     }
 
     for (const l of labs) {
       const size = s * 0.024;
-      ctx.font = `500 ${size}px ${FONT_STACK}`;
       ctx.fillStyle = `rgba(235,240,255,${0.9 * l.alpha})`;
       ctx.shadowColor = `rgba(0,0,0,${0.6 * l.alpha})`;
       ctx.shadowBlur = size * 0.4;
@@ -161,15 +179,13 @@ export class Overlay {
       ctx.moveTo(l.x + size * 0.35, l.y - size * 0.35);
       ctx.lineTo(l.x + ox * 0.85, l.y + oy * 0.85);
       ctx.stroke();
-      this.spaced(l.text, l.x + ox, l.y + oy, size * 0.08, 'left');
+      this.spaced(l.text, l.x + ox, l.y + oy, 0.06, 'left', body(600), size);
       ctx.shadowBlur = 0;
     }
 
     if (this.enabled && this.handle) {
-      const size = s * 0.022;
-      ctx.font = `500 ${size}px ${FONT_STACK}`;
       ctx.fillStyle = 'rgba(255,255,255,0.55)';
-      this.spaced(this.handle, w / 2, h * (portrait ? 0.93 : 0.94), size * 0.2, 'center');
+      this.spaced(this.handle, w / 2, h * (portrait ? 0.93 : 0.94), 0.2, 'center', body(600), s * 0.022, maxW);
     }
     return true;
   }
