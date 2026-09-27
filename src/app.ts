@@ -49,12 +49,17 @@ export class App {
   fps = 60;
   private fpsAcc = 0;
   private fpsN = 0;
+  /** Adaptive preview resolution (live view only; exports always use the exact size). */
+  private previewMax: number;
+  private slowTime = 0;
+  private fastTime = 0;
 
   constructor(canvas: HTMLCanvasElement, stage: HTMLElement, opts: AppOptions = {}) {
     this.canvas = canvas;
     this.stage = stage;
     this.renderer = new Renderer(canvas, { cubeSize: opts.cubeSize ?? 1024 });
     this.previewLongEdge = opts.previewLongEdge ?? 1600;
+    this.previewMax = this.previewLongEdge;
     this.renderer.particles.countScale = opts.particleScale ?? 1;
     this.scene = sceneById(null);
   }
@@ -107,12 +112,34 @@ export class App {
       this.fpsN++;
       if (this.fpsAcc > 0.5) {
         this.fps = this.fpsN / this.fpsAcc;
+        this.adaptPreview(this.fpsAcc);
         this.fpsAcc = 0;
         this.fpsN = 0;
       }
       this.tick(dt, t / 1000);
     };
     requestAnimationFrame(loop);
+  }
+
+  /** Trade preview resolution for smoothness on slower GPUs. */
+  private adaptPreview(span: number) {
+    if (this.fps < 42) {
+      this.slowTime += span;
+      this.fastTime = 0;
+      if (this.slowTime > 1.5 && this.previewLongEdge > 720) {
+        this.previewLongEdge = Math.max(720, Math.round(this.previewLongEdge * 0.82));
+        this.slowTime = 0;
+      }
+    } else if (this.fps > 57) {
+      this.fastTime += span;
+      this.slowTime = 0;
+      if (this.fastTime > 6 && this.previewLongEdge < this.previewMax) {
+        this.previewLongEdge = Math.min(this.previewMax, Math.round(this.previewLongEdge * 1.12));
+        this.fastTime = 0;
+      }
+    } else {
+      this.slowTime = this.fastTime = 0;
+    }
   }
 
   tick(dt: number, now = performance.now() / 1000) {

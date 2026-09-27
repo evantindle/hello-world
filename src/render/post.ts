@@ -205,7 +205,7 @@ export const DEFAULT_POST: PostSettings = {
   bloomKaris: 0.15,
   exposure: 1.0,
   vignette: 0.55,
-  grain: 0.035,
+  grain: 0.025,
   ca: 0.0025,
   saturation: 1.05,
   contrast: 1.04,

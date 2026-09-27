@@ -3,3 +3,4 @@ dist/
 renders/
 *.log
 .DS_Store
+dist-single/

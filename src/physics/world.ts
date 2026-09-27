@@ -92,6 +92,12 @@ export interface Body {
   born: number;
 }
 
+/** The body that currently carries `b` (follows merges). */
+export function live(b: Body): Body {
+  while (!b.alive && b.mergedInto) b = b.mergedInto;
+  return b;
+}
+
 export type WorldEvent =
   | { type: 'merge'; t: number; a: Body; b: Body; result: Body; pos: V3; vel: V3; relSpeed: number }
   | { type: 'eject'; t: number; body: Body; speed: number }

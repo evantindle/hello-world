@@ -106,7 +106,7 @@ export interface SceneDef {
   title: string;
   subtitle: string;
   blurb: string;
-  category: 'Three-Body' | 'Black Holes' | 'Galactic';
+  category: 'Three-Body' | 'N-Body' | 'Black Holes' | 'Galactic';
   seeded?: boolean;
   build(ctx: { seed: number }): SceneSetup;
 }

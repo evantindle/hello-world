@@ -18,14 +18,17 @@ try {
   const app = new App(canvas, stage, {
     cubeSize: Number(params.get('cube') ?? 1024),
     previewLongEdge: Number(params.get('preview') ?? 1600),
-    particleScale: Number(params.get('particles') ?? 1),
+    // Phones get half the particles unless asked otherwise (brightness is compensated).
+    particleScale: Number(params.get('particles') ?? (matchMedia('(pointer: coarse)').matches ? 0.5 : 1)),
   });
   const aspect = ASPECTS.find((a) => a.id === params.get('aspect'));
   if (aspect) app.aspect = aspect;
   if (params.get('captions') === '0') app.captions = false;
   app.overlay.handle = params.get('handle') ?? '';
   const seed = Number(params.get('seed') ?? 1);
-  app.load(sceneById(params.get('scene')), seed);
+  // `?scene=id` or a bare `#id` deep link.
+  const fromHash = location.hash.slice(1);
+  app.load(sceneById(params.get('scene') ?? (SCENES.some((s) => s.id === fromHash) ? fromHash : null)), seed);
 
   // Automation API (used by scripts/render.mjs and the test harness).
   let session: ClipSession | null = null;

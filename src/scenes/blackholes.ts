@@ -1,13 +1,13 @@
 // Black-hole scenes: a lensed accretion disk, a gravitational-wave inspiral and merger,
 // a tidal disruption event, and a chaotic triple of black holes.
 
-import { blackbody } from '../core/color.ts';
+import { blackbody, hex } from '../core/color.ts';
 import { dist, type RGB, type V3 } from '../core/math.ts';
 import { Rng } from '../core/rng.ts';
-import { World, type Body } from '../physics/world.ts';
+import { live, World, type Body } from '../physics/world.ts';
 import type { ParticleGroupSpec } from '../render/particles.ts';
 import type { Runtime } from '../engine/runtime.ts';
-import { accretionDisk, sparks } from './helpers.ts';
+import { accretionDisk, diskInit, sparks } from './helpers.ts';
 import type { SceneDef, SceneSetup } from './types.ts';
 
 const BH_SKY = {
@@ -299,4 +299,135 @@ export const tripleBlackHoles: SceneDef = {
   },
 };
 
-export const BLACK_HOLE_SCENES: SceneDef[] = [gargantua, bbhMerger, tidalDisruption, tripleBlackHoles];
+
+/** Hyperbolic two-body state: relative position/velocity at distance r0 on the incoming branch. */
+function hyperbolicApproach(GM: number, vInf: number, rPeri: number, r0: number): { x: V3; v: V3 } {
+  const a = GM / (vInf * vInf); // |a|
+  const e = 1 + rPeri / a;
+  const p = a * (e * e - 1);
+  const nu = -Math.acos(Math.max(-1, Math.min(1, (p / r0 - 1) / e)));
+  const k = Math.sqrt(GM / p);
+  const vr = k * e * Math.sin(nu), vt = k * (1 + e * Math.cos(nu));
+  const c = Math.cos(nu), s = Math.sin(nu);
+  return { x: [r0 * c, r0 * s, 0], v: [vr * c - vt * s, vr * s + vt * c, 0] };
+}
+
+export const rogueBlackHole: SceneDef = {
+  id: 'rogue',
+  title: 'Rogue Black Hole',
+  subtitle: 'A black hole wanders through a solar system',
+  blurb: 'A black hole twice the mass of the Sun passes through the planets. Who survives?',
+  category: 'Black Holes',
+  build(): SceneSetup {
+    const w = new World({ c: 5, collisions: true, closeFactor: 0, ejectFactor: 3, rtol: 1e-11 });
+    const sun = w.add({ kind: 'star', name: 'Sun', m: 1, x: [0, 0, 0], v: [0, 0, 0], radius: 0.16, collide: 0.1, color: blackbody(5600), intensity: 1.3, spikes: 0.7, trail: { fade: 12, maxAge: 40, width: 0.02, intensity: 0.5, core: 0.3 }, canEject: false });
+    const planets: { name: string; r: number; m: number; size: number; col: string }[] = [
+      { name: 'Mercury', r: 0.75, m: 2e-7, size: 0.025, col: '#b9b2a8' },
+      { name: 'Venus', r: 1.15, m: 2.4e-6, size: 0.035, col: '#f3d9a4' },
+      { name: 'Earth', r: 1.6, m: 3e-6, size: 0.037, col: '#5aa7ff' },
+      { name: 'Mars', r: 2.1, m: 3.2e-7, size: 0.03, col: '#ff6a3d' },
+      { name: 'Jupiter', r: 3.9, m: 9.5e-4, size: 0.075, col: '#e3b889' },
+      { name: 'Saturn', r: 5.2, m: 2.9e-4, size: 0.065, col: '#f5d27a' },
+      { name: 'Uranus', r: 6.6, m: 4.4e-5, size: 0.05, col: '#8ff0ff' },
+      { name: 'Neptune', r: 8.0, m: 5.2e-5, size: 0.05, col: '#4a6bff' },
+    ];
+    const rng = new Rng(11);
+    const bodies = planets.map((pl) => {
+      const ph = rng.range(0, Math.PI * 2);
+      const v = Math.sqrt(1 / pl.r);
+      const color = hex(pl.col);
+      return w.add({
+        kind: 'planet',
+        name: pl.name,
+        m: pl.m,
+        x: [pl.r * Math.cos(ph), pl.r * Math.sin(ph), 0],
+        v: [-v * Math.sin(ph), v * Math.cos(ph), 0],
+        radius: pl.size,
+        collide: pl.size * 0.4,
+        color,
+        intensity: 0.35,
+        track: false,
+        trail: { fade: 2 * Math.PI * Math.pow(pl.r, 1.5) * 0.35, maxAge: 60, width: 0.018, intensity: 0.9, core: 0.35, color },
+      });
+    });
+    // The intruder: 2 solar masses, arriving at 0.35 (≈ 10 km/s-ish in these units) toward a 2.4 AU pass.
+    const Mbh = 2;
+    const rel = hyperbolicApproach(1 + Mbh, 0.35, 2.4, 22);
+    const bh = w.add({ kind: 'blackhole', name: 'BH', m: Mbh, x: rel.x, v: rel.v, ring: 0.4, track: false, canEject: false, trail: { fade: 20, maxAge: 60, width: 0.03, intensity: 0.4, core: 0.2, color: [0.6, 0.7, 1] } });
+    w.centerOfMassFrame();
+
+    const belt = (name: string, rIn: number, rOut: number, count: number, seed: number): ParticleGroupSpec => ({
+      name,
+      count,
+      mode: 'free',
+      colorMode: 'lit',
+      color: hex('#8a7a6a'),
+      color2: hex('#6a7a9a'),
+      size: 0.012,
+      intensity: 0.06,
+      ambient: 0.05,
+      lightSoftening: 0.4,
+      streak: 0.5,
+      init: diskInit({ seed, center: sun.x, vel: sun.v, M: 1, rIn, rOut, thickness: 0.03, p: 1, jitter: 0.02 }),
+    });
+
+    let tallied = false;
+    let closest = Infinity;
+    return {
+      worlds: [w],
+      duration: 55,
+      c: 5,
+      particles: [belt('asteroids', 2.6, 3.3, 70000, 5), belt('kuiper', 9.0, 11.5, 70000, 6), sparks(12000, 3, 0.02, 2)],
+      sky: { ...BH_SKY, exposure: 1 },
+      camera: { elevation: 48, orbitSpeed: 1.2, margin: 1, minRadius: 10.5, holdTime: 6, zoomIn: 0.25, zoomOut: 0.8, pan: 0.6, fov: 38 },
+      director: { baseRate: 2.4, maxScreenSpeed: 0, startHold: 1.4, easeIn: 1.5, outro: 7 },
+      shutter: 0.5,
+      trailSpacing: 0.01,
+      labels: [
+        ...bodies.filter((_, i) => i === 2 || i === 4).map((b) => ({ body: b, text: b.name, from: 1, to: 6 })),
+        { body: bh, text: 'black hole · 2 M☉', from: 6.5, to: 11 },
+      ],
+      captions: [
+        { at: 0.5, text: 'Black holes', duration: 5.5, kind: 'kicker' },
+        { at: 0.5, text: 'Rogue Black Hole', sub: 'what if one passed through the solar system?', duration: 5.5, kind: 'title' },
+      ],
+      onEvent: (ev, rt) => {
+        if (ev.type === 'merge') {
+          const victim = ev.a.kind === 'planet' ? ev.a : ev.b.kind === 'planet' ? ev.b : null;
+          if (!victim) return; // sun + BH: default fireworks
+          rt.vfx.flash(rt.clock, [...ev.pos] as V3, victim.color, 0.08, 10, 0.9, 3, 1);
+          return true;
+        }
+        if (ev.type === 'eject') return true;
+      },
+      onFrame: (rt) => {
+        const cur = live(sun);
+        const hole = live(bh);
+        const d = hole === cur ? 0 : dist(hole.x, cur.x);
+        closest = Math.min(closest, d);
+        // Once the intruder has passed and receded, classify each planet by what it is bound to.
+        if (!tallied && closest < 6 && d > 17) {
+          tallied = true;
+          let ejected = 0, captured = 0, kept = 0, lost = 0;
+          for (const p of bodies) {
+            if (!p.alive) { lost++; continue; }
+            const bound = (host: Body) => {
+              const dx = p.x.map((x, k) => x - host.x[k]);
+              const dv = p.v.map((v, k) => v - host.v[k]);
+              const r = Math.hypot(dx[0], dx[1], dx[2]);
+              return 0.5 * (dv[0] ** 2 + dv[1] ** 2 + dv[2] ** 2) - host.m / r < 0 && r < 30;
+            };
+            if (hole !== cur && bound(cur)) kept++;
+            else if (bound(hole)) captured++;
+            else ejected++;
+          }
+          const parts = [`${kept} still orbit the Sun`, captured ? `${captured} stolen by the black hole` : '', ejected ? `${ejected} flung into interstellar space` : '', lost ? `${lost} destroyed` : ''].filter(Boolean);
+          rt.setup.captions!.push({ at: rt.clock + 0.3, text: 'The aftermath', sub: parts.join(' · '), duration: 6.5, kind: 'caption' });
+          rt.resolve('aftermath');
+        }
+      },
+    };
+  },
+};
+
+export const BLACK_HOLE_SCENES: SceneDef[] = [gargantua, bbhMerger, tidalDisruption, tripleBlackHoles, rogueBlackHole];

@@ -282,12 +282,15 @@ export class Runtime {
       const col: RGB = bh ? [0.7, 0.82, 1.0] : mixc(ev.a.color, ev.b.color, 0.5);
       const R = Math.max(ev.a.radius, ev.b.radius, ev.result.rs * 2);
       const res = ev.result;
+      // Size the glare to what is on screen so a merger reads as a flash, not a white-out.
+      const F = this.camera.radius;
+      const core = Math.min(R * 1.5, F * 0.05);
       // A tight white-hot core, a coloured bloom and an expanding hollow ring.
-      this.vfx.flash(c, () => res.x, [1, 0.97, 0.92], R * 1.5, 45, 0.9, 1.5, 1);
-      this.vfx.flash(c, () => res.x, col, R * 3, 6, 1.6, 2.5, 1);
-      this.vfx.flash(c, [...ev.pos] as V3, col, R * 2, 3.5, 2.4, 9, 2);
+      this.vfx.flash(c, () => res.x, [1, 0.97, 0.92], core, 14, 0.8, 1.2, 1);
+      this.vfx.flash(c, () => res.x, col, core * 2.5, 1.6, 1.6, 2.0, 1);
+      this.vfx.flash(c, [...ev.pos] as V3, col, F * 0.05, 2.2, 2.4, 12, 2);
       this.vfx.shock(c, ev.pos, bh ? 30 : 16, bh ? 1000 : 750, 2.6);
-      this.vfx.pulseScreen(bh ? 0.3 : 0.18, col);
+      this.vfx.pulseScreen(bh ? 0.12 : 0.08, col);
       this.camera.addShake(bh ? 0.7 : 0.45);
       this.director.slowmo(c, 0.12, 0.9, 0.08, 2.0);
       const g = this.renderer.particles.group('sparks');

@@ -60,6 +60,18 @@ export interface ExportResult {
   filename: string;
 }
 
+/** Re-render the current moment at full resolution and return it as a PNG (cover images). */
+export async function renderStill(app: App, width: number, height: number): Promise<{ blob: Blob; filename: string }> {
+  const rt = app.runtime;
+  if (!rt) throw new Error('Nothing to capture yet.');
+  await app.overlay.fontsReady;
+  rt.render(width, height);
+  const blob = await new Promise<Blob | null>((res) => app.canvas.toBlob(res, 'image/png'));
+  if (!blob) throw new Error('Could not encode the image.');
+  const t = rt.primary.t.toFixed(1).replace('.', '_');
+  return { blob, filename: `gravitas-${app.scene.id}-t${t}-${width}x${height}.png` };
+}
+
 export function supportsExport(): boolean {
   return typeof VideoEncoder !== 'undefined';
 }

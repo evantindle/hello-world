@@ -78,7 +78,8 @@ async function main() {
   const { createServer } = await import('vite');
   const { chromium } = await import('playwright');
 
-  const server = await createServer({ root, logLevel: 'error', server: { port: 0, host: '127.0.0.1' } });
+  // No HMR/file watching: editing sources mid-render must not reload the page being recorded.
+  const server = await createServer({ root, logLevel: 'error', server: { port: 0, host: '127.0.0.1', hmr: false, watch: null } });
   await server.listen();
   const addr = server.httpServer.address();
   const base = `http://127.0.0.1:${addr.port}/`;

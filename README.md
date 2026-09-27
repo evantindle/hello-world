@@ -11,6 +11,8 @@ npm run dev        # open http://localhost:5173
 
 Pick a scene, press **Export MP4**, and get a frame-perfect 1080×1920 / 60 fps video ready for Reels, TikTok or Shorts.
 
+`npm run build:single` packs the whole engine into one self-contained HTML file (`dist-single/gravitas.html`, ~440 KB with fonts). You can open it from disk, send it to someone, or host it anywhere.
+
 ---
 
 ## Scenes
@@ -78,6 +80,7 @@ Output lands in `renders/`.
 | `N` | New random seed (seeded scenes) |
 | `C` | Toggle captions |
 | `E` | Export MP4 |
+| `S` | Save the current frame as a full-resolution PNG (cover image) |
 | `H` | Hide the interface (double-click to bring it back) |
 
 The interface also fades out after a few idle seconds, so screen recording works too.
@@ -154,8 +157,14 @@ export const binaryStar: SceneDef = {
 
 Then add it to `SCENES` in `src/scenes/index.ts`. Hooks: `onEvent(ev, rt)` (merge / eject / periapsis), `onFrame(rt, dt)`, and `rt.resolve()` to start the outro. Particle recipes live in `helpers.ts` (`embers`, `sparks`, `diskInit`, `accretionDisk`).
 
+## Determinism
+
+Clips are reproducible. The physics integrator takes its own adaptive steps and never sees frame boundaries; the renderer interpolates between steps for display. So a chaotic system (a random seed, the butterfly ensemble) plays out *exactly* the same in the live preview, a 30 fps export and a 60 fps export. `npm test` checks this with bitwise-identical event times under three different frame slicings.
+
 ## Requirements
 
 * A browser with WebGL2 and `EXT_color_buffer_float`. That covers every current desktop browser and most phones.
 * Export needs WebCodecs (Chrome/Edge 94+, Safari 17+, Firefox 130+).
 * Node 22+ for the dev server, `npm test` and the CLI.
+
+Fonts: Manrope (SIL Open Font License) and Syncopate (Apache 2.0), bundled under `src/assets/fonts` with their licenses.
