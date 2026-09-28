@@ -132,7 +132,7 @@ function attractorFlow(d: AttractorDef, o: FlowOpts): ParticleGroupSpec {
   };
 }
 
-const MATH_SKY = {
+export const MATH_SKY = {
   exposure: 0.55,
   nebula: { intensity: 0.025, coverage: 0.3 },
   band: { intensity: 0.02 },

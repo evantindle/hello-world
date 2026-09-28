@@ -2,10 +2,11 @@ import { BLACK_HOLE_SCENES } from './blackholes.ts';
 import { CLUSTER_SCENES } from './clusters.ts';
 import { MATH_SCENES } from './attractors.ts';
 import { GALAXY_SCENES } from './galaxies.ts';
+import { PATTERN_SCENES } from './patterns.ts';
 import { THREE_BODY_SCENES } from './threebody.ts';
 import type { SceneDef } from './types.ts';
 
-export const SCENES: SceneDef[] = [...THREE_BODY_SCENES, ...CLUSTER_SCENES, ...BLACK_HOLE_SCENES, ...GALAXY_SCENES, ...MATH_SCENES];
+export const SCENES: SceneDef[] = [...THREE_BODY_SCENES, ...CLUSTER_SCENES, ...BLACK_HOLE_SCENES, ...GALAXY_SCENES, ...MATH_SCENES, ...PATTERN_SCENES];
 
 export function sceneById(id: string | null | undefined): SceneDef {
   return SCENES.find((s) => s.id === id) ?? SCENES[0];

@@ -12,14 +12,17 @@ import { setViewUniforms, type View } from './view.ts';
 
 export const TEX_W = 1024;
 
-export type ParticleMode = 'free' | 'emitter' | 'disk' | 'rigid' | 'jet' | 'burst' | 'flow';
-export type ColorMode = 'fixed' | 'ember' | 'disk' | 'debris' | 'star' | 'jet' | 'gradient' | 'lit' | 'speed';
+export type ParticleMode = 'free' | 'emitter' | 'disk' | 'rigid' | 'jet' | 'burst' | 'flow' | 'map' | 'static';
+export type ColorMode = 'fixed' | 'ember' | 'disk' | 'debris' | 'star' | 'jet' | 'gradient' | 'lit' | 'speed' | 'ink';
 /** Vector fields for 'flow' groups (strange attractors); ids are shared with the GLSL below. */
 export type FlowField = 'lorenz' | 'aizawa' | 'thomas' | 'halvorsen' | 'chen' | 'rossler';
 export const FLOW_FIELD_ID: Record<FlowField, number> = { lorenz: 0, aizawa: 1, thomas: 2, halvorsen: 3, chen: 4, rossler: 5 };
+/** 2D iterated maps for 'map' groups; ids are shared with the GLSL below. */
+export type IteratedMap = 'clifford' | 'dejong';
+export const MAP_ID: Record<IteratedMap, number> = { clifford: 0, dejong: 1 };
 
-const MODE_ID: Record<ParticleMode, number> = { free: 0, emitter: 1, disk: 2, rigid: 3, jet: 4, burst: 0, flow: 5 };
-const COLOR_ID: Record<ColorMode, number> = { fixed: 0, ember: 1, disk: 2, debris: 3, star: 4, jet: 5, gradient: 6, lit: 7, speed: 8 };
+const MODE_ID: Record<ParticleMode, number> = { free: 0, emitter: 1, disk: 2, rigid: 3, jet: 4, burst: 0, flow: 5, map: 6, static: 7 };
+const COLOR_ID: Record<ColorMode, number> = { fixed: 0, ember: 1, disk: 2, debris: 3, star: 4, jet: 5, gradient: 6, lit: 7, speed: 8, ink: 9 };
 
 /** Initial age of particles present from the first frame: past every colour mode's fade-in. */
 const BORN_AGE = 1;
@@ -82,8 +85,8 @@ export interface ParticleGroupSpec {
   ambient?: number;
   /** 'disk' colour mode: emissivity ∝ (r / rIn)^-falloff. */
   falloff?: number;
-  /** Per-particle initial state (free/rigid/disk groups). */
-  init?: (i: number) => ParticleInit;
+  /** Per-particle initial state (free/rigid/disk/flow/map/static groups); n is the group's actual count. */
+  init?: (i: number, n: number) => ParticleInit;
   /** Initial brightness multiplier (e.g. 0 for effects switched on later). */
   gain?: number;
   /**
@@ -97,8 +100,22 @@ export interface ParticleGroupSpec {
   fieldScale?: number;
   fieldRate?: number;
   fieldStep?: number;
-  /** 'speed' colour mode: world speed that maps to color2. */
+  /** 'speed' colour mode: world speed that maps to color2 (for 'map' groups: jump length). */
   speedRef?: number;
+  /**
+   * 'map' groups: every particle is a point (u, v) of a 2D iterated map drawn in the xy plane
+   * at ((u, v) - mapCenter) * mapScale. Points hop to their image hopRate times per unit of sim
+   * time; hopBlend = 1 glides them there (eased), 0 shows each iterate as it lands.
+   * Both, and the map parameters, can be changed each frame through ParticleGroup.map.
+   */
+  map?: IteratedMap;
+  mapParams?: [number, number, number, number];
+  mapCenter?: [number, number];
+  mapScale?: number;
+  hopRate?: number;
+  hopBlend?: number;
+  /** 'ink' colour mode: extra brightness of freshly drawn particles (the pen tip). */
+  inkGlow?: number;
 }
 
 export interface ParticleGroup {
@@ -112,6 +129,8 @@ export interface ParticleGroup {
   gain: number;
   /** Burst pools: next row to spawn into. */
   burstCursor: number;
+  /** 'map' groups: hop clock (integer part = hops applied) and live controls. */
+  map?: { hop: number; hopPrev: number; rate: number; blend: number; params: [number, number, number, number] };
 }
 
 export interface BodyFrame {
@@ -156,6 +175,11 @@ uniform vec4 uGE[MAX_GROUPS];  // streak multiplier, gravity scale, emit radius 
 uniform vec4 uGV[MAX_GROUPS];  // colorMode, size, intensity, doppler
 uniform vec4 uGCol[MAX_GROUPS]; // rgb, tempIn
 uniform vec4 uGCol2[MAX_GROUPS]; // secondary colour (gradient mode)
+// 2D iterated maps (ids match MAP_ID): Clifford and Peter de Jong.
+vec2 mapStep(int m, vec2 q, vec4 P) {
+  if (m == 0) return vec2(sin(P.x * q.y) + P.z * cos(P.x * q.x), sin(P.y * q.x) + P.w * cos(P.y * q.y));
+  return vec2(sin(P.x * q.y) - cos(P.y * q.x), sin(P.z * q.x) - cos(P.w * q.y));
+}
 `;
 
 const UPDATE_FS = HEADER + HASH + BODY_UNIFORMS + GROUP_UNIFORMS + /* glsl */ `
@@ -239,6 +263,26 @@ void main() {
   float life = V.w;
   float age = P.w;
   vec3 x = P.xyz, v = V.xyz;
+
+  // Static points (e.g. a harmonograph drawing): only the clock runs; they appear at age 0.
+  if (mode == 7) { oPos = vec4(x, age + uDt); oVel = V; return; }
+
+  // Iterated map: position holds the map point (u, v); apply the hops completed this frame.
+  if (mode == 6) {
+    if (age < 0.0) { oPos = P; oVel = V; return; }
+    int n = int(floor(GC.z)) - int(floor(GA.w));
+    vec2 q = x.xy;
+    int mid = int(GD.x + 0.5);
+    for (int k = 0; k < 8; k++) {
+      if (k >= n) break;
+      q = mapStep(mid, q, GB);
+      // A whisper of noise keeps points from fusing if the map passes through a periodic window.
+      q += (vec2(rnd(id, float(k) * 2.0 + 11.0), rnd(id, float(k) * 2.0 + 12.0)) - 0.5) * 4e-5;
+    }
+    oPos = vec4(q, 0.0, age + uDt);
+    oVel = V;
+    return;
+  }
 
   // Flow along an attractor's vector field (RK4 in the attractor's own coordinates).
   if (mode == 5) {
@@ -447,7 +491,7 @@ void main() {
   vec4 V = texelFetch(uVel, ij, 0);
   vec4 A = texelFetch(uAttr, ij, 0);
   int g = int(A.x + 0.5);
-  if (g < 0 || g >= MAX_GROUPS || P.w < 0.0 || !secondaryCandidate(P.xyz)) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+  if (g < 0 || g >= MAX_GROUPS || P.w < 0.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
   vec4 GA = uGA[g], GV = uGV[g], GCol = uGCol[g];
   int mode = int(GA.x + 0.5);
   int host = int(GA.y + 0.5) - 1;
@@ -455,6 +499,23 @@ void main() {
   vec3 x = P.xyz;
   vec3 v = (mode == 3 && uGC[g].w < 1.5) ? (host >= 0 ? uBV1[host].xyz : vec3(0.0)) : V.xyz;
   float age = P.w, life = V.w;
+  // What 'speed' colouring measures: velocity, or for map points the length of their jump.
+  vec3 vcol = v;
+  if (mode == 6) {
+    vec4 MC = uGC[g], MD = uGD[g];
+    vec2 q = P.xy;
+    vec2 fq = mapStep(int(MD.x + 0.5), q, uGB[g]);
+    // Glide from q to its image over the first half of each hop (smootherstep), then rest on
+    // the landed pattern; blend 0 shows each iterate as it lands.
+    float s = min(fract(MC.z) / 0.5, 1.0);
+    float e = MC.w * s * s * s * (s * (s * 6.0 - 15.0) + 10.0);
+    float de = MC.w * 30.0 * s * s * (1.0 - s) * (1.0 - s) / 0.5;
+    vec2 m = mix(q, fq, e);
+    x = vec3((m - MC.xy) * MD.y, 0.0);
+    v = vec3((fq - q) * MD.y * de * MD.w, 0.0);
+    vcol = vec3((fq - q) * MD.y, 0.0);
+  }
+  if (!secondaryCandidate(x)) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
 
   // ---- colour ----
   float I = GV.z * uGain * uGainG[g / 4][g % 4];
@@ -519,9 +580,14 @@ void main() {
     I *= smoothstep(0.0, 0.3, age) * (0.5 + A.z * 0.5);
   } else if (cmode == 8) {
     // Speed-graded: slow drift in the base colour, fast sweeps glow in color2.
-    float t = clamp(length(v) / max(uGE[g].w, 1e-6), 0.0, 1.5);
+    float t = clamp(length(vcol) / max(uGE[g].w, 1e-6), 0.0, 1.5);
     col = mix(GCol.rgb, uGCol2[g].rgb, smoothstep(0.0, 1.0, t));
     I *= (0.45 + 0.75 * t) * (0.7 + 0.6 * A.w);
+  } else if (cmode == 9) {
+    // Ink: a gradient along the drawing; the freshest ink is white-hot, then cools.
+    float hot = exp(-age / 0.15);
+    col = mix(mix(GCol.rgb, uGCol2[g].rgb, A.w), vec3(1.0, 0.96, 0.9), 0.65 * hot);
+    I *= (0.8 + 0.4 * A.z) * (1.0 + uGE[g].w * hot);
   } else if (cmode == 5) {
     float t = life > 0.0 ? clamp(age / life, 0.0, 1.0) : 0.0;
     I *= (1.0 - t) * smoothstep(0.0, 0.05, t);
@@ -642,7 +708,10 @@ export class ParticleSystem {
       const start = row * TEX_W;
       const rows = Math.max(1, Math.ceil(spec.count / TEX_W));
       row += rows;
-      return { spec, index, start, count: rows * TEX_W, release: 0, gain: spec.gain ?? 1, burstCursor: 0 };
+      const map = spec.mode === 'map'
+        ? { hop: 0, hopPrev: 0, rate: spec.hopRate ?? 1, blend: spec.hopBlend ?? 1, params: [...(spec.mapParams ?? [0, 0, 0, 0])] as [number, number, number, number] }
+        : undefined;
+      return { spec, index, start, count: rows * TEX_W, release: 0, gain: spec.gain ?? 1, burstCursor: 0, map };
     });
     this.rows = Math.max(1, row);
     this.capacity = this.rows * TEX_W;
@@ -684,7 +753,7 @@ export class ParticleSystem {
           continue;
         }
         if (s.init) {
-          const p = s.init(k);
+          const p = s.init(k, s.count);
           if (s.mode === 'rigid' && s.host) {
             // Rigid particles store their offset in the velocity slot; place them on the parent.
             p.x = [s.host.x[0] + p.v[0], s.host.x[1] + p.v[1], s.host.x[2] + p.v[2]];
@@ -762,9 +831,15 @@ export class ParticleSystem {
       const s = g.spec;
       const i = g.index * 4;
       const n = norm(s.normal ?? [0, 0, 1]);
-      if (s.mode === 'flow') {
+      if (s.mode === 'map' && g.map) {
+        const mc = s.mapCenter ?? [0, 0];
+        b.ga.set([MODE_ID.map, 0, 0, g.map.hopPrev], i);
+        b.gb.set(g.map.params, i);
+        b.gc.set([mc[0], mc[1], g.map.hop, g.map.blend], i);
+        b.gd.set([MAP_ID[s.map ?? 'clifford'], s.mapScale ?? 1, this.bodyIdx(s.other), g.map.rate], i);
+      } else if (s.mode === 'flow') {
         const fc = s.fieldCenter ?? [0, 0, 0];
-        b.ga.set([MODE_ID.flow, -1, s.life ?? 0, s.fieldStep ?? 0.005], i);
+        b.ga.set([MODE_ID.flow, 0, s.life ?? 0, s.fieldStep ?? 0.005], i);
         b.gb.set(s.fieldParams ?? [0, 0, 0, 0], i);
         b.gc.set([fc[0], fc[1], fc[2], 0], i);
         b.gd.set([FLOW_FIELD_ID[s.field ?? 'lorenz'], s.fieldScale ?? 1, this.bodyIdx(s.other), s.fieldRate ?? 1], i);
@@ -774,7 +849,8 @@ export class ParticleSystem {
         b.gc.set([n[0], n[1], n[2], g.release], i);
         b.gd.set([s.circularize ?? 0, s.circRadius ?? 0, this.bodyIdx(s.other), s.tidalRadius ?? 0], i);
       }
-      b.ge.set([s.streak ?? 1, s.gravity ?? 1, s.emitRadius ?? 1.05, s.colorMode === 'speed' ? s.speedRef ?? 1 : s.ambient ?? 0], i);
+      const gew = s.colorMode === 'speed' ? s.speedRef ?? 1 : s.colorMode === 'ink' ? s.inkGlow ?? 0 : s.ambient ?? 0;
+      b.ge.set([s.streak ?? 1, s.gravity ?? 1, s.emitRadius ?? 1.05, gew], i);
       b.gv.set([COLOR_ID[s.colorMode], s.size, s.intensity, s.doppler ?? 1], i);
       b.gcol.set([s.color[0], s.color[1], s.color[2], s.tempIn ?? 12000], i);
       const c2 = s.color2 ?? s.color;
@@ -796,6 +872,11 @@ export class ParticleSystem {
     if (!this.groups.length || dt <= 0) return;
     const gl = this.gl;
     this.packBodies(frames);
+    for (const g of this.groups) {
+      if (!g.map) continue;
+      g.map.hopPrev = g.map.hop;
+      g.map.hop += g.map.rate * dt;
+    }
     this.packGroups();
     this.lastDt = dt;
     const src = this.targets[this.cur];
