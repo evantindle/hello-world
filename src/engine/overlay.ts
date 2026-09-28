@@ -146,6 +146,22 @@ export class Overlay {
           ctx.fillStyle = `rgba(200,220,255,${0.82 * a})`;
           this.spaced(cue.sub, w / 2, y + Math.max(px, size * 0.7) * 1.25, 0.08, 'center', body(500), size * 0.46, maxW);
         }
+      } else if (cue.kind === 'equation') {
+        const lines = cue.lines ?? [];
+        const size = s * 0.036;
+        const lead = size * 1.55;
+        const y0 = h * (portrait ? 0.72 : 0.7) - (lines.length - 1) * lead * 0.5 + rise;
+        ctx.fillStyle = `rgba(150,200,255,${0.9 * a})`;
+        this.spaced(cue.text.toUpperCase(), w / 2, y0 - lead * 1.15, 0.42, 'center', body(600), s * 0.024, maxW);
+        lines.forEach((line, k) => {
+          const la = a * smoothstep(0.35 * k, 0.35 * k + 0.7, t);
+          if (la <= 0.002) return;
+          ctx.fillStyle = `rgba(255,255,255,${la})`;
+          ctx.shadowColor = `rgba(140,190,255,${0.5 * la})`;
+          ctx.shadowBlur = size * 0.5;
+          this.spaced(line, w / 2, y0 + k * lead + (1 - smoothstep(0.35 * k, 0.35 * k + 0.9, t)) * size * 0.4, 0.02, 'center', body(500), size, maxW);
+          ctx.shadowBlur = 0;
+        });
       } else if (cue.kind === 'kicker') {
         const y = h * (portrait ? 0.2 : 0.17) - s * 0.07 + rise;
         ctx.fillStyle = `rgba(150,200,255,${0.9 * a})`;

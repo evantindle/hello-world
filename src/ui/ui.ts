@@ -6,7 +6,7 @@ import { download, exportClip, renderStill, supportsExport } from '../export/rec
 import { SCENES } from '../scenes/index.ts';
 import type { SceneDef } from '../scenes/types.ts';
 
-const CATEGORIES: SceneDef['category'][] = ['Three-Body', 'N-Body', 'Black Holes', 'Galactic'];
+const CATEGORIES: SceneDef['category'][] = ['Three-Body', 'N-Body', 'Black Holes', 'Galactic', 'Math'];
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', html = ''): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);

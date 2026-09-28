@@ -12,11 +12,14 @@ import { setViewUniforms, type View } from './view.ts';
 
 export const TEX_W = 1024;
 
-export type ParticleMode = 'free' | 'emitter' | 'disk' | 'rigid' | 'jet' | 'burst';
-export type ColorMode = 'fixed' | 'ember' | 'disk' | 'debris' | 'star' | 'jet' | 'gradient' | 'lit';
+export type ParticleMode = 'free' | 'emitter' | 'disk' | 'rigid' | 'jet' | 'burst' | 'flow';
+export type ColorMode = 'fixed' | 'ember' | 'disk' | 'debris' | 'star' | 'jet' | 'gradient' | 'lit' | 'speed';
+/** Vector fields for 'flow' groups (strange attractors); ids are shared with the GLSL below. */
+export type FlowField = 'lorenz' | 'aizawa' | 'thomas' | 'halvorsen' | 'chen' | 'rossler';
+export const FLOW_FIELD_ID: Record<FlowField, number> = { lorenz: 0, aizawa: 1, thomas: 2, halvorsen: 3, chen: 4, rossler: 5 };
 
-const MODE_ID: Record<ParticleMode, number> = { free: 0, emitter: 1, disk: 2, rigid: 3, jet: 4, burst: 0 };
-const COLOR_ID: Record<ColorMode, number> = { fixed: 0, ember: 1, disk: 2, debris: 3, star: 4, jet: 5, gradient: 6, lit: 7 };
+const MODE_ID: Record<ParticleMode, number> = { free: 0, emitter: 1, disk: 2, rigid: 3, jet: 4, burst: 0, flow: 5 };
+const COLOR_ID: Record<ColorMode, number> = { fixed: 0, ember: 1, disk: 2, debris: 3, star: 4, jet: 5, gradient: 6, lit: 7, speed: 8 };
 
 /** Initial age of particles present from the first frame: past every colour mode's fade-in. */
 const BORN_AGE = 1;
@@ -83,6 +86,19 @@ export interface ParticleGroupSpec {
   init?: (i: number) => ParticleInit;
   /** Initial brightness multiplier (e.g. 0 for effects switched on later). */
   gain?: number;
+  /**
+   * 'flow' groups: particles follow dx/dt = F(x) of a strange attractor instead of gravity.
+   * World position = (p - fieldCenter) * fieldScale, where p is in the attractor's own units;
+   * fieldRate is attractor time per unit of sim time and fieldStep the largest RK4 step.
+   */
+  field?: FlowField;
+  fieldParams?: [number, number, number, number];
+  fieldCenter?: V3;
+  fieldScale?: number;
+  fieldRate?: number;
+  fieldStep?: number;
+  /** 'speed' colour mode: world speed that maps to color2. */
+  speedRef?: number;
 }
 
 export interface ParticleGroup {
@@ -189,6 +205,18 @@ void basis(vec3 n, out vec3 u, out vec3 w) {
   u = normalize(cross(n, abs(n.x) < 0.9 ? vec3(1, 0, 0) : vec3(0, 1, 0)));
   w = cross(n, u);
 }
+// Strange attractors (ids match FLOW_FIELD_ID). P holds the tunable parameters.
+vec3 flowField(int f, vec3 p, vec4 P) {
+  float x = p.x, y = p.y, z = p.z;
+  if (f == 0) return vec3(P.x * (y - x), x * (P.y - z) - y, x * y - P.z * z);
+  if (f == 1) return vec3((z - P.y) * x - P.w * y, P.w * x + (z - P.y) * y,
+                          P.z + P.x * z - z * z * z / 3.0 - (x * x + y * y) * (1.0 + 0.25 * z) + 0.1 * z * x * x * x);
+  if (f == 2) return vec3(sin(y) - P.x * x, sin(z) - P.x * y, sin(x) - P.x * z);
+  if (f == 3) return vec3(-P.x * x - 4.0 * y - 4.0 * z - y * y, -P.x * y - 4.0 * z - 4.0 * x - z * z, -P.x * z - 4.0 * x - 4.0 * y - x * x);
+  if (f == 4) return vec3(P.x * (y - x), (P.z - P.x) * x - x * z + P.z * y, x * y - P.y * z);
+  return vec3(-y - z, x + P.x * y, P.y + z * (x - P.z));
+}
+
 float circSpeed(int h, float r) {
   float m = uBP1[h].w;
   float rs = uBK[h].z;
@@ -211,6 +239,30 @@ void main() {
   float life = V.w;
   float age = P.w;
   vec3 x = P.xyz, v = V.xyz;
+
+  // Flow along an attractor's vector field (RK4 in the attractor's own coordinates).
+  if (mode == 5) {
+    if (age < 0.0) { oPos = P; oVel = V; return; }
+    int fid = int(GD.x + 0.5);
+    float sc = GD.y, rate = GD.w;
+    vec3 p = x / sc + GC.xyz;
+    float T = uDt * rate;
+    int n = clamp(int(ceil(abs(T) / max(GA.w, 1e-5))), 1, 64);
+    float h = T / float(n);
+    for (int k = 0; k < 64; k++) {
+      if (k >= n) break;
+      vec3 k1 = flowField(fid, p, GB);
+      vec3 k2 = flowField(fid, p + 0.5 * h * k1, GB);
+      vec3 k3 = flowField(fid, p + 0.5 * h * k2, GB);
+      vec3 k4 = flowField(fid, p + h * k3, GB);
+      p += h * (k1 + 2.0 * k2 + 2.0 * k3 + k4) / 6.0;
+    }
+    // Numerical escapees (never on the attractor itself) are parked out of sight.
+    if (!(dot(p, p) < 1e8)) { oPos = vec4(x, -1e30); oVel = vec4(0.0); return; }
+    oPos = vec4((p - GC.xyz) * sc, age + uDt);
+    oVel = vec4(flowField(fid, p, GB) * rate * sc, life);
+    return;
+  }
 
   // Rigidly attached (e.g. a star before tidal disruption): offset stored in v.
   if (mode == 3 && host >= 0 && GC.w < 1.5) {
@@ -465,6 +517,11 @@ void main() {
     vec3 base = mix(GCol.rgb, uGCol2[g].rgb, A.w);
     col = base * uGE[g].w + lit * mix(vec3(1.0), base * 1.6, 0.35);
     I *= smoothstep(0.0, 0.3, age) * (0.5 + A.z * 0.5);
+  } else if (cmode == 8) {
+    // Speed-graded: slow drift in the base colour, fast sweeps glow in color2.
+    float t = clamp(length(v) / max(uGE[g].w, 1e-6), 0.0, 1.5);
+    col = mix(GCol.rgb, uGCol2[g].rgb, smoothstep(0.0, 1.0, t));
+    I *= (0.45 + 0.75 * t) * (0.7 + 0.6 * A.w);
   } else if (cmode == 5) {
     float t = life > 0.0 ? clamp(age / life, 0.0, 1.0) : 0.0;
     I *= (1.0 - t) * smoothstep(0.0, 0.05, t);
@@ -705,11 +762,19 @@ export class ParticleSystem {
       const s = g.spec;
       const i = g.index * 4;
       const n = norm(s.normal ?? [0, 0, 1]);
-      b.ga.set([MODE_ID[s.mode], this.bodyIdx(s.host), s.life ?? 0, s.speed ?? 0], i);
-      b.gb.set([s.colorMode === 'lit' ? s.lightSoftening ?? 0.1 : s.rIn ?? 1, s.rOut ?? 10, s.thickness ?? 0.02, s.inflow ?? 0], i);
-      b.gc.set([n[0], n[1], n[2], g.release], i);
-      b.gd.set([s.circularize ?? 0, s.circRadius ?? 0, this.bodyIdx(s.other), s.tidalRadius ?? 0], i);
-      b.ge.set([s.streak ?? 1, s.gravity ?? 1, s.emitRadius ?? 1.05, s.ambient ?? 0], i);
+      if (s.mode === 'flow') {
+        const fc = s.fieldCenter ?? [0, 0, 0];
+        b.ga.set([MODE_ID.flow, -1, s.life ?? 0, s.fieldStep ?? 0.005], i);
+        b.gb.set(s.fieldParams ?? [0, 0, 0, 0], i);
+        b.gc.set([fc[0], fc[1], fc[2], 0], i);
+        b.gd.set([FLOW_FIELD_ID[s.field ?? 'lorenz'], s.fieldScale ?? 1, this.bodyIdx(s.other), s.fieldRate ?? 1], i);
+      } else {
+        b.ga.set([MODE_ID[s.mode], this.bodyIdx(s.host), s.life ?? 0, s.speed ?? 0], i);
+        b.gb.set([s.colorMode === 'lit' ? s.lightSoftening ?? 0.1 : s.rIn ?? 1, s.rOut ?? 10, s.thickness ?? 0.02, s.inflow ?? 0], i);
+        b.gc.set([n[0], n[1], n[2], g.release], i);
+        b.gd.set([s.circularize ?? 0, s.circRadius ?? 0, this.bodyIdx(s.other), s.tidalRadius ?? 0], i);
+      }
+      b.ge.set([s.streak ?? 1, s.gravity ?? 1, s.emitRadius ?? 1.05, s.colorMode === 'speed' ? s.speedRef ?? 1 : s.ambient ?? 0], i);
       b.gv.set([COLOR_ID[s.colorMode], s.size, s.intensity, s.doppler ?? 1], i);
       b.gcol.set([s.color[0], s.color[1], s.color[2], s.tempIn ?? 12000], i);
       const c2 = s.color2 ?? s.color;

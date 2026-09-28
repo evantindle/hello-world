@@ -428,6 +428,12 @@ export class World {
    */
   advance(dt: number) {
     if (dt <= 0) return;
+    if (!this.bodies.length) {
+      // Nothing to integrate (e.g. pure particle-flow scenes): time still passes.
+      this.t += dt;
+      this.tInt = this.t;
+      return;
+    }
     if (this.dirty) this.rebuild();
     const tReq = this.t + dt;
     while (this.pending.length && this.pending[0].t <= tReq) {

@@ -32,6 +32,8 @@ Pick a scene, press **Export MP4**, and get a frame-perfect 1080×1920 / 60 fps 
 | **Three Become One** (`bh-triple`, seeded) | A third black hole crashes into a binary | Two successive mergers leave one survivor |
 | **Rogue Black Hole** (`rogue`) | A black hole of two solar masses passes through the solar system, shredding the asteroid and Kuiper belts | Planets are swallowed, stolen or flung into interstellar space; the ending tallies who is left |
 | **When Galaxies Collide** (`galaxies`) | Two spirals (~440k stars) pass each other, throwing out tidal tails | The cores sink together and merge; a quasar ignites |
+| **The Lorenz Attractor** (`lorenz`) | 300,000 points start as one tiny drop and flow along Lorenz's equations | Chaos stretches the drop into a ribbon, then fills the famous butterfly |
+| **Aizawa / Thomas / Halvorsen / Rössler** (`aizawa`, `thomas`, `halvorsen`, `rossler`) | 300,000 points flowing along a strange attractor, with its equations on screen | Endless, never-repeating flow: a sphere with a tube through it, a symmetric knot, a three-bladed propeller, a leaping spiral |
 
 Seeded scenes take `?seed=N` (or the dice button) and give a new, still-resolving system each time.
 
@@ -109,7 +111,7 @@ src/
              trails.ts      ribbon trails from ring buffers in a float texture
              bodies.ts      stars, flashes, diffraction spikes
              post.ts        bloom mip chain, distortion, AgX tone mapping, grain
-  scenes/    threebody.ts, clusters.ts, blackholes.ts, galaxies.ts, orbits.ts, helpers.ts
+  scenes/    threebody.ts, clusters.ts, blackholes.ts, galaxies.ts, attractors.ts, orbits.ts, helpers.ts
   export/    recorder.ts    deterministic frame stepping + WebCodecs MP4 (Mediabunny)
 scripts/     render.mjs     CLI batch renderer (Playwright + ffmpeg)
              verify-physics.ts  numerical checks (npm test)
@@ -117,7 +119,7 @@ scripts/     render.mjs     CLI batch renderer (Playwright + ffmpeg)
 
 **Physics.** Massive bodies are integrated in double precision with an adaptive Dormand–Prince 5(4) method (tolerances down to 1e-13). Every accepted step feeds the trails, so hairpin close encounters are sampled densely. Black-hole pairs lose energy through a drag term matched to Peters' quadrupole formula, which gives a real chirp. Mergers keep momentum, radiate a few percent of the mass and can add a recoil kick. `npm test` checks the published results: the figure-eight returns to its start after one period (error below 1e-8, energy drift ~1e-12), the Šuvakov–Dmitrašinović orbits close, the Pythagorean problem ejects the mass-3 star at t≈59.7, and the inspiral time matches Peters' estimate to about 1%.
 
-**Particles.** Massless tracers (dust, accretion disks, stellar debris, galaxy stars, jets, sparks) live entirely on the GPU. Each frame a fragment shader integrates every particle with kick-drift-kick leapfrog. Sub-steps are adaptive per particle, limited by the local dynamical time, so close passes don't produce numerical slingshots. Body positions are Hermite-interpolated across the frame. Black holes use a Paczyński–Wiita potential, so disks get a real inner edge (ISCO) and plunging gas. Disk colour comes from a temperature profile, relativistic Doppler beaming and gravitational redshift.
+**Particles.** Massless tracers (dust, accretion disks, stellar debris, galaxy stars, jets, sparks) live entirely on the GPU. Each frame a fragment shader integrates every particle with kick-drift-kick leapfrog. Sub-steps are adaptive per particle, limited by the local dynamical time, so close passes don't produce numerical slingshots. Body positions are Hermite-interpolated across the frame. Black holes use a Paczyński–Wiita potential, so disks get a real inner edge (ISCO) and plunging gas. Disk colour comes from a temperature profile, relativistic Doppler beaming and gravitational redshift. `flow` groups ignore gravity and follow the vector field of a strange attractor instead (RK4 on the GPU), coloured by speed.
 
 **Lensing.** The sky is lensed per pixel using the exact Schwarzschild deflection angle, integrated numerically and tabulated from the photon sphere to the weak-field limit. Everything else (stars, trails, particles) is lensed per vertex with the thin-lens equation, drawing both the primary and the secondary image. That is why the far side of an accretion disk arcs over the black hole, and why a star passing behind one flares into an Einstein ring.
 
@@ -158,6 +160,8 @@ export const binaryStar: SceneDef = {
 ```
 
 Then add it to `SCENES` in `src/scenes/index.ts`. Hooks: `onEvent(ev, rt)` (merge / eject / periapsis), `onFrame(rt, dt)`, and `rt.resolve()` to start the outro. Particle recipes live in `helpers.ts` (`embers`, `sparks`, `diskInit`, `accretionDisk`).
+
+**A new attractor** takes three steps: add its equations to `flowField` in `src/render/particles.ts` (GLSL) and to `F` in `src/scenes/attractors.ts` (the CPU twin that places the particles), register its id in `FLOW_FIELD_ID`, then describe the scene with `mathScene({ def, flow, equations, ... })`. The scene frames itself: the attractor is traced once on the CPU, measured, and scaled to fit. Check the parameters really are chaotic, since many values fall into a plain periodic loop.
 
 ## Determinism
 

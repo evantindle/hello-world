@@ -63,8 +63,10 @@ export interface CaptionCue {
   delay?: number;
   text: string;
   sub?: string;
+  /** 'equation' cues: lines revealed one after another under a small heading. */
+  lines?: string[];
   duration: number;
-  kind: 'title' | 'caption' | 'kicker';
+  kind: 'title' | 'caption' | 'kicker' | 'equation';
 }
 
 export interface BodyLabel {
@@ -106,7 +108,7 @@ export interface SceneDef {
   title: string;
   subtitle: string;
   blurb: string;
-  category: 'Three-Body' | 'N-Body' | 'Black Holes' | 'Galactic';
+  category: 'Three-Body' | 'N-Body' | 'Black Holes' | 'Galactic' | 'Math';
   seeded?: boolean;
   build(ctx: { seed: number }): SceneSetup;
 }
