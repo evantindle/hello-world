@@ -30,7 +30,10 @@ export class Camera {
   resize(cssW: number, cssH: number, dpr: number): void {
     this.cssW = Math.max(1, cssW);
     this.cssH = Math.max(1, cssH);
-    this.dpr = Math.min(2, Math.max(1, dpr));
+    // Cap the backing store around 3.6 megapixels: huge high-DPI screens stay smooth, and the
+    // cartoon art does not need more.
+    const cap = Math.sqrt(3.6e6 / (this.cssW * this.cssH));
+    this.dpr = Math.max(1, Math.min(2, dpr, cap));
     this.rotated = this.cssH > this.cssW * 1.15;
     const vw = TABLE_W + 2 * VIEW_MARGIN;
     const vh = TABLE_H + 2 * VIEW_MARGIN;

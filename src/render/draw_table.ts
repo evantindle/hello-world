@@ -1,4 +1,4 @@
-import { COLORS, PLAY, RAIL_W, TABLE_H, TABLE_W } from '../config';
+import { COLORS, PLAY, RAIL_W } from '../config';
 import { TAU } from '../core/vec';
 import type { Fx } from '../fx/fx';
 import type { Jelly } from '../fx/jelly';
@@ -68,53 +68,6 @@ export function tracePath(ctx: CanvasRenderingContext2D, vt: VisualTable): void 
     ctx.quadraticCurveTo(c.x, c.y, b.x, b.y);
   }
   ctx.closePath();
-}
-
-// ---------------------------------------------------------------- background (screen space)
-
-export function drawBackground(
-  ctx: CanvasRenderingContext2D,
-  cam: Camera,
-  time: number,
-  pulse: number,
-): void {
-  const w = cam.cssW;
-  const h = cam.cssH;
-  ctx.setTransform(cam.dpr, 0, 0, cam.dpr, 0, 0);
-  ctx.fillStyle = COLORS.bgB;
-  ctx.fillRect(0, 0, w, h);
-  const c = cam.worldToScreen(TABLE_W / 2, TABLE_H / 2);
-  const rays = 16;
-  const rot = time * 0.04;
-  const far = Math.hypot(w, h) * 1.2;
-  ctx.beginPath();
-  for (let i = 0; i < rays; i++) {
-    const a0 = rot + (i * TAU) / rays;
-    const a1 = a0 + TAU / rays / 2;
-    ctx.moveTo(c.x, c.y);
-    ctx.arc(c.x, c.y, far, a0, a1);
-    ctx.closePath();
-  }
-  ctx.fillStyle = COLORS.bgA;
-  ctx.fill();
-  const glowR = Math.max(w, h) * (0.55 + pulse * 0.08);
-  const g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, glowR);
-  g.addColorStop(0, `rgba(255,176,96,${0.26 + pulse * 0.2})`);
-  g.addColorStop(1, 'rgba(255,176,96,0)');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, w, h);
-  const v = ctx.createRadialGradient(
-    w / 2,
-    h / 2,
-    Math.min(w, h) * 0.32,
-    w / 2,
-    h / 2,
-    Math.max(w, h) * 0.78,
-  );
-  v.addColorStop(0, 'rgba(12,4,28,0)');
-  v.addColorStop(1, 'rgba(12,4,28,0.65)');
-  ctx.fillStyle = v;
-  ctx.fillRect(0, 0, w, h);
 }
 
 // ---------------------------------------------------------------- table body

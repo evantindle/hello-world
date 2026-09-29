@@ -5,14 +5,7 @@ import type { Game } from '../game/game';
 import type { Camera } from './camera';
 import { drawBalls, drawBallShadows, star } from './draw_balls';
 import { drawCue, drawGuide, drawSpeedLines } from './draw_cue';
-import {
-  buildVisual,
-  drawBackground,
-  drawHandles,
-  drawPockets,
-  drawTableBody,
-  type HandleView,
-} from './draw_table';
+import { buildVisual, drawHandles, drawPockets, drawTableBody, type HandleView } from './draw_table';
 
 export class Renderer {
   readonly ctx: CanvasRenderingContext2D;
@@ -24,7 +17,8 @@ export class Renderer {
     private readonly cam: Camera,
     private readonly view: () => HandleView,
   ) {
-    const ctx = canvas.getContext('2d', { alpha: false });
+    // Transparent canvas: the backdrop (sunburst, glow, vignette) is plain CSS behind it.
+    const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Canvas 2D is not available');
     this.ctx = ctx;
   }
@@ -42,8 +36,8 @@ export class Renderer {
 
   draw(): void {
     const { ctx, game, fx, cam } = this;
-    const pulse = fx.flash;
-    drawBackground(ctx, cam, fx.time, pulse);
+    ctx.setTransform(cam.dpr, 0, 0, cam.dpr, 0, 0);
+    ctx.clearRect(0, 0, cam.cssW, cam.cssH);
     cam.apply(ctx);
     const vt = buildVisual(game.table, fx.jelly);
     drawTableBody(ctx, game, fx, vt);
