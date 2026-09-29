@@ -16,6 +16,7 @@
 }
 
 :root {
+  color-scheme: dark;
   --ink: #1c1233;
   --cream: #fff8e7;
   --yellow: #ffd23f;
