@@ -1,5 +1,6 @@
 import { R } from '../config';
 import { damp } from '../core/easing';
+import { TAU } from '../core/vec';
 import type { Ball } from '../physics/world';
 
 export type Mood = 'normal' | 'squint' | 'shock' | 'dizzy' | 'happy' | 'squeeze' | 'worried';
@@ -39,6 +40,8 @@ export interface BallFx {
   nextBlink: number;
   mood: Mood;
   moodT: number;
+  /** Cue ball: how far sidespin has twirled its face, radians (springs back when it stops). */
+  yaw: number;
   idleLookT: number;
   idleX: number;
   idleY: number;
@@ -95,6 +98,7 @@ function fresh(rand: () => number): BallFx {
     idleLookT: 0,
     idleX: 0,
     idleY: 0,
+    yaw: 0,
   };
 }
 
@@ -173,8 +177,13 @@ export class BallFxStore {
       }
       if (b.active) {
         f.sunk = false;
-        const s = Math.hypot(b.vx, b.vy);
-        if (s > 1e-3) roll(f, b.vx / s, b.vy / s, (s * dt) / R);
+        // Decals follow the ball's spin, not its travel: v - slip (the same thing without English).
+        const wx = b.vx - b.sx;
+        const wy = b.vy - b.sy;
+        const s = Math.hypot(wx, wy);
+        if (s > 1e-3) roll(f, wx / s, wy / s, (s * dt) / R);
+        if (b.wz !== 0) f.yaw += (b.wz / R) * dt * 0.25;
+        else f.yaw = damp(f.yaw, Math.round(f.yaw / TAU) * TAU, 6, dt);
       }
       if (b.kind === 'cue') this.updateEyes(f, b, dt, rand, look);
     }

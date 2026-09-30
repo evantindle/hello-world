@@ -13,16 +13,16 @@ export interface InputHooks {
 
 /**
  * Pointer + keyboard. One active pointer at a time. In the plan phase: grab knobs and "+"
- * handles to bend the table, double-tap a bend to remove it, hold the cue ball (or SHOOT, or
- * Space) to charge. Tapping bare felt pokes it.
+ * handles to bend the table, double-tap a bend to remove it. Tapping bare felt pokes it.
+ * Keys: Space/Enter shoots, arrows turn the power dial (Shift for big steps), Esc cancels a
+ * windup, Z/Backspace undoes, M mutes.
  */
 export class Input {
   hover: Handle | null = null;
   pointer: Vec | null = null;
   private active: number | null = null;
-  private mode: 'none' | 'drag' | 'charge' = 'none';
+  private mode: 'none' | 'drag' = 'none';
   private lastTap = { t: 0, vid: -1 };
-  private keyCharging = false;
   /** Until the player bends something, the first plan phase shows a "DRAG ME!" tag. */
   private tutorial = true;
 
@@ -44,11 +44,6 @@ export class Input {
     window.addEventListener('pointercancel', this.cancel);
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     window.addEventListener('keydown', this.keydown);
-    window.addEventListener('keyup', this.keyup);
-    window.addEventListener('blur', () => {
-      if (this.keyCharging) this.game.cancelCharge();
-      this.keyCharging = false;
-    });
   }
 
   endTutorial(): void {
@@ -97,27 +92,22 @@ export class Input {
         }
         this.lastTap = { t: now, vid };
       }
-      if (g.beginDrag(h, p.x, p.y)) this.capture(e, 'drag');
-      return;
-    }
-    const cue = g.cue;
-    if (Math.hypot(p.x - cue.x, p.y - cue.y) < R * 1.9) {
-      if (g.beginCharge()) this.capture(e, 'charge');
+      if (g.beginDrag(h, p.x, p.y)) this.capture(e);
       return;
     }
     g.poke(p.x, p.y);
   };
 
-  private capture(e: PointerEvent, mode: 'drag' | 'charge') {
+  private capture(e: PointerEvent) {
     this.active = e.pointerId;
-    this.mode = mode;
+    this.mode = 'drag';
     this.hover = null;
     try {
       this.canvas.setPointerCapture(e.pointerId);
     } catch {
       // Synthetic events (tests) cannot be captured; window listeners still see the release.
     }
-    this.canvas.style.cursor = mode === 'drag' ? 'grabbing' : 'default';
+    this.canvas.style.cursor = 'grabbing';
   }
 
   private readonly move = (e: PointerEvent): void => {
@@ -130,27 +120,18 @@ export class Input {
     if (this.mode !== 'none') return;
     const g = this.game;
     this.hover = g.hitHandle(p.x, p.y, this.hitRadius(e.pointerType !== 'mouse'));
-    const nearCue = g.phase === 'plan' && !g.charging && Math.hypot(p.x - g.cue.x, p.y - g.cue.y) < R * 1.9;
-    this.canvas.style.cursor = this.hover
-      ? 'grab'
-      : nearCue
-        ? 'pointer'
-        : g.phase === 'spin'
-          ? 'pointer'
-          : 'default';
+    this.canvas.style.cursor = this.hover ? 'grab' : g.phase === 'spin' ? 'pointer' : 'default';
   };
 
   private readonly up = (e: PointerEvent): void => {
     if (e.pointerId !== this.active) return;
     if (this.mode === 'drag') this.game.endDrag();
-    else if (this.mode === 'charge') this.game.releaseCharge();
     this.release();
   };
 
   private readonly cancel = (e: PointerEvent): void => {
     if (e.pointerId !== this.active) return;
     if (this.mode === 'drag') this.game.endDrag();
-    else if (this.mode === 'charge') this.game.cancelCharge();
     this.release();
   };
 
@@ -170,18 +151,19 @@ export class Input {
       if (g.phase === 'title') g.start();
       else if (g.phase === 'over' && g.phaseT > 1.5) g.restart();
       else if (g.phase === 'spin') g.skipSpin();
-      else if (g.phase === 'plan' && g.beginCharge()) this.keyCharging = true;
+      else if (g.phase === 'plan') g.shoot();
+    } else if (e.code === 'Escape') {
+      g.cancelShot();
+    } else if (e.code === 'ArrowUp' || e.code === 'ArrowRight') {
+      e.preventDefault();
+      if (g.phase === 'plan' && !g.charging) g.nudgeDial(e.shiftKey ? 0.1 : 0.02);
+    } else if (e.code === 'ArrowDown' || e.code === 'ArrowLeft') {
+      e.preventDefault();
+      if (g.phase === 'plan' && !g.charging) g.nudgeDial(e.shiftKey ? -0.1 : -0.02);
     } else if (e.code === 'KeyZ' || e.code === 'Backspace') {
       if (g.undo()) e.preventDefault();
     } else if (e.code === 'KeyM') {
       this.hooks.toggleMute();
-    }
-  };
-
-  private readonly keyup = (e: KeyboardEvent): void => {
-    if ((e.code === 'Space' || e.code === 'Enter') && this.keyCharging) {
-      this.keyCharging = false;
-      this.game.releaseCharge();
     }
   };
 }

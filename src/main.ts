@@ -6,6 +6,7 @@ import { Director } from './fx/director';
 import { Fx } from './fx/fx';
 import { Autopilot } from './game/demo';
 import { Game } from './game/game';
+import { FREE_RULES } from './game/ruleset';
 import { Input } from './input/input';
 import { Camera } from './render/camera';
 import { Renderer } from './render/renderer';
@@ -19,7 +20,7 @@ const demo = params.get('demo') === '1';
 const canvas = document.getElementById('world') as HTMLCanvasElement;
 const hudRoot = document.getElementById('hud') as HTMLElement;
 
-const game = new Game({ seed, persist: !demo });
+const game = new Game({ seed, persist: !demo, rules: FREE_RULES });
 const cam = new Camera();
 const fx = new Fx(createRng(seed ?? randomSeed()).next);
 const sfx = new Sfx();
@@ -37,6 +38,11 @@ const hud = new Hud(hudRoot, game, {
   isMuted: () => sfx.muted,
   gesture,
   press: () => sfx.pop(),
+  ouch: () => {
+    sfx.poke();
+    fx.balls.setMood(0, 'squeeze', 0.8);
+    fx.pops.add('OW!', game.cue.x, game.cue.y - 50, fx.rand, { size: 30, color: '#ff8fa3', force: true });
+  },
 });
 const input = new Input(canvas, cam, game, {
   gesture,
@@ -55,7 +61,15 @@ fx.reset(game);
 void document.fonts?.load('32px Bangers');
 void document.fonts?.load('700 20px Fredoka');
 
-const resize = () => renderer.resize();
+const resize = () => {
+  // On tall screens there is height to spare: keep the table clear of the HUD bars. (On wide
+  // screens height is what limits the table, so it keeps all of it.)
+  const tall = window.innerHeight > window.innerWidth * 1.15;
+  const bands = hud.bands();
+  cam.padTop = tall ? bands.top + 4 : 0;
+  cam.padBottom = tall ? bands.bottom + 4 : 0;
+  renderer.resize();
+};
 new ResizeObserver(resize).observe(canvas);
 window.addEventListener('resize', resize);
 resize();

@@ -54,6 +54,19 @@ export class Director {
   private skidT = 0;
   private turn = 0;
   private now = 0;
+  private lastDialTick = 0;
+  /** English watch for the current shot: launch heading, the cue's velocity right after its
+   * first contact, and which exclamations have been used. */
+  private eng = {
+    on: false,
+    dx: 0,
+    dy: 0,
+    after: null as { vx: number; vy: number } | null,
+    banana: false,
+    screw: false,
+    whee: false,
+    swirlT: 0,
+  };
 
   constructor(
     private readonly game: Game,
@@ -125,13 +138,22 @@ export class Director {
       hud.showBanner('SMACK IT!', 'smack');
     });
 
-    ev.on('chargeCancel', ({ reason }) => {
+    ev.on('chargeCancel', () => {
       sfx.strainStop();
-      if (reason === 'tap') {
-        hud.toast('HOLD IT DOWN!', 'meh');
-        sfx.nope();
-      }
       this.resetCamera();
+    });
+
+    ev.on('dial', ({ value }) => {
+      fx.dialShow = 1.4;
+      if (this.now - this.lastDialTick > 0.04) {
+        this.lastDialTick = this.now;
+        sfx.tick(6 + value * 26);
+      }
+    });
+
+    ev.on('english', ({ x, y }) => {
+      fx.englishShow = 1.4;
+      if (Math.hypot(x, y) > 0.05) fx.balls.setMood(0, 'squint', 0.25);
     });
 
     ev.on('phase', ({ to }) => {
@@ -143,6 +165,14 @@ export class Director {
     });
 
     ev.on('strike', ({ power, x, y, dx, dy }) => {
+      const shot = game.shot;
+      const english = !!shot && (shot.ex !== 0 || shot.ey !== 0);
+      this.eng = { on: english, dx, dy, after: null, banana: false, screw: false, whee: false, swirlT: 0 };
+      if (english) {
+        // Chalk puff where the tip meets the ball.
+        const side = (shot.ex / 100) * R * 0.55;
+        fx.particles.dust(x - dx * R - dy * side, y - dy * R + dx * side, 9, 150, r, '#8fc2ff');
+      }
       sfx.whack(power);
       this.cam.addShake(0.3 + 0.55 * power);
       this.resetCamera();
@@ -190,6 +220,10 @@ export class Director {
             });
           if (e.a.kind === 'cue' || e.b.kind === 'cue') {
             if (s > 600) fx.balls.setMood(0, 'shock', 0.5);
+            if (this.eng.on && !this.eng.after) {
+              const c = e.a.kind === 'cue' ? e.a : e.b;
+              this.eng.after = { vx: c.vx, vy: c.vy };
+            }
           }
           if (s > 1100) this.cam.addShake(0.12);
           break;
@@ -242,6 +276,10 @@ export class Director {
           }
           break;
         }
+        case 'kick':
+          pop('KICK!', e.x, e.y, { size: 30, color: '#8fc2ff' });
+          fx.particles.sparks(e.x, e.y, e.ball.vx, e.ball.vy, 5, 260, r, '#8fc2ff');
+          break;
         case 'stopped':
           if (e.timedOut) hud.toast('THE REF CALLS TIME!', 'meh');
           break;
@@ -426,6 +464,7 @@ export class Director {
         this.sfx.ding(5);
       }
     }
+    if (g.phase === 'sim' && this.eng.on) this.watchEnglish(dtReal);
     if (g.phase === 'sim') {
       const cue = g.cue;
       if (cue.active && cue.braking && !this.cueWasBraking) {
@@ -451,6 +490,44 @@ export class Director {
       }
     }
     void COLORS;
+  }
+
+  /** Cartoon commentary on English: bends, screw-backs, follow-throughs, spin-dizzy eyes. */
+  private watchEnglish(dtReal: number): void {
+    const cue = this.game.cue;
+    const fx = this.fx;
+    const r = fx.rand;
+    const e = this.eng;
+    if (!cue.active) return;
+    const sp = Math.hypot(cue.vx, cue.vy);
+    const slip = Math.hypot(cue.sx, cue.sy);
+    if (slip > 600 || Math.abs(cue.wz) > 800) fx.balls.setMood(0, 'dizzy', 0.3);
+    if (slip > 150 && sp > 60) {
+      e.swirlT -= dtReal;
+      if (e.swirlT <= 0) {
+        e.swirlT = 0.04;
+        fx.particles.dust(cue.x - (cue.vx / sp) * R, cue.y - (cue.vy / sp) * R, 1, 50, r, '#b9d9ff');
+      }
+    }
+    if (!e.after) {
+      // Still on the way to the first contact: has side English bent the path?
+      if (!e.banana && sp > 80 && (cue.vx * e.dx + cue.vy * e.dy) / sp < Math.cos((12 * Math.PI) / 180)) {
+        e.banana = true;
+        fx.pops.add('BANANA!', cue.x, cue.y - 40, r, { size: 34, color: '#ffe45c', force: true });
+        this.sfx.sproing();
+      }
+      return;
+    }
+    const along = cue.vx * e.dx + cue.vy * e.dy;
+    if (!e.screw && along < -80) {
+      e.screw = true;
+      fx.pops.add('SCREW BACK!', cue.x, cue.y - 40, r, { size: 36, color: '#8fc2ff', force: true });
+      this.sfx.sproing();
+    } else if (!e.whee && along > 80 && sp > Math.hypot(e.after.vx, e.after.vy) + 120) {
+      e.whee = true;
+      fx.pops.add('WHEEE!', cue.x, cue.y - 40, r, { size: 36, color: '#b8ff8a', force: true });
+      this.sfx.sproing();
+    }
   }
 
   /** Where the cue ball's eyes should look. */

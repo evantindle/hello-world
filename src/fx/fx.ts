@@ -42,6 +42,9 @@ export class Fx {
   releasePull = 0;
   /** The bottom of the screen as a world direction; set from the camera every frame. */
   down = { x: 0, y: 1 };
+  /** Seconds left to show the power ring / English marker after the player touched them. */
+  dialShow = 0;
+  englishShow = 0;
 
   constructor(readonly rand: () => number) {}
 
@@ -73,6 +76,8 @@ export class Fx {
     this.pops.update(dt);
     this.balls.update(dt, game.balls, this.rand, look);
     this.flash = Math.max(0, this.flash - dtReal * 5);
+    this.dialShow = Math.max(0, this.dialShow - dtReal);
+    this.englishShow = Math.max(0, this.englishShow - dtReal);
     this.vignette = damp(this.vignette, this.vignetteTarget, 6, dtReal);
     for (const [k, v] of this.nope) {
       if (v - dtReal <= 0) this.nope.delete(k);

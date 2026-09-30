@@ -230,7 +230,8 @@ function decal(
 /** The cue ball is a character. These are its googly eyes and moods. */
 function drawFace(ctx: CanvasRenderingContext2D, f: BallFx, fx: Fx, game: Game, up: number) {
   ctx.save();
-  ctx.rotate(up);
+  // Sidespin twirls the whole face around (the look vector below stays in the upright frame).
+  ctx.rotate(up + f.yaw);
   // Look vector is in world space; bring it into the upright frame.
   const c = Math.cos(-up);
   const s = Math.sin(-up);

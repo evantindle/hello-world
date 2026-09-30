@@ -85,24 +85,24 @@ describe('game flow', () => {
     expect(g.budget).toBe(BUDGET);
   });
 
-  it('a quick tap on shoot cancels; a hold shoots, sims, resolves and counts the shot', () => {
+  it('SHOOT winds the stick up to the dial, then strikes, sims, resolves and counts the shot', () => {
     const g = new Game({ seed: 5 });
     g.forcedAngle = 0; // straight at the rack
     g.start();
     runUntil(g, () => g.phase === 'plan');
-    g.beginCharge();
-    g.update(0.05);
-    g.releaseCharge();
-    expect(g.phase).toBe('plan');
-    expect(g.shots).toBe(0);
-
+    g.setDial(1);
     const phases: Phase[] = [];
     g.events.on('phase', (e) => phases.push(e.to));
-    g.beginCharge();
-    for (let i = 0; i < Math.ceil(CHARGE_TIME / DT) + 5; i++) g.update(DT);
-    expect(g.power).toBe(1);
-    g.releaseCharge();
+    expect(g.shoot()).toBe(true);
+    expect(g.shoot()).toBe(false); // already winding up
+    expect(g.phase).toBe('plan');
+    expect(g.charging).toBe(true);
+    for (let i = 0; i < Math.ceil(CHARGE_TIME / DT) - 2; i++) g.update(DT);
+    expect(g.phase).toBe('plan');
+    expect(g.power).toBeGreaterThan(0.8);
+    for (let i = 0; i < 4; i++) g.update(DT);
     expect(g.phase).toBe('strike');
+    expect(g.strikePower).toBe(1);
     expect(g.shots).toBe(1);
     runUntil(g, () => g.phase === 'spin' || g.phase === 'over');
     expect(phases.slice(0, 3)).toEqual(['strike', 'sim', 'resolve']);
@@ -126,13 +126,43 @@ describe('game flow', () => {
     expect(JSON.stringify({ t: g.table.verts, b: g.balls.map((b) => [b.x, b.y]) })).toBe(before);
   });
 
-  it('reshaping is locked while charging and outside the plan phase', () => {
+  it('reshaping is locked while winding up and outside the plan phase', () => {
     const g = new Game({ seed: 8 });
     expect(g.hitHandle(1000, 500, 30)).toBeNull(); // title
     g.start();
     runUntil(g, () => g.phase === 'plan');
-    g.beginCharge();
+    g.shoot();
     expect(g.hitHandle(1000, 500, 30)).toBeNull();
+  });
+
+  it('Escape cancels a windup; nothing is shot', () => {
+    const g = new Game({ seed: 8 });
+    g.start();
+    runUntil(g, () => g.phase === 'plan');
+    g.shoot(0.9);
+    g.update(DT);
+    g.cancelShot();
+    expect(g.charging).toBe(false);
+    expect(g.phase).toBe('plan');
+    for (let i = 0; i < 120; i++) g.update(DT);
+    expect(g.phase).toBe('plan');
+    expect(g.shots).toBe(0);
+  });
+
+  it('the dial is exact in thousandths, and the shot records it', () => {
+    const g = new Game({ seed: 3 });
+    g.start();
+    runUntil(g, () => g.phase === 'plan');
+    g.setDial(0.85671);
+    expect(g.dial).toBe(0.857);
+    g.nudgeDial(0.02);
+    expect(g.dial).toBe(0.877);
+    g.setDial(5);
+    expect(g.dial).toBe(1);
+    g.setDial(0.42);
+    g.shoot();
+    runUntil(g, () => g.phase === 'sim');
+    expect(g.shot?.p).toBe(420);
   });
 
   it('plays a whole seeded game to the end with random bends and random power', () => {
@@ -158,6 +188,7 @@ describe('game flow', () => {
         }
       }
       g.shoot(rng.range(0.3, 1));
+      runUntil(g, () => phase() !== 'plan'); // the windup
     }
     expect(g.phase).toBe('over');
     expect(overs).toBe(1);

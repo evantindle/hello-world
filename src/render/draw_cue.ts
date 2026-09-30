@@ -29,7 +29,8 @@ function stickPose(game: Game, fx: Fx): StickPose | null {
     case 'spin':
       return { pull: 14, bend: 0, alpha: 1 };
     case 'plan': {
-      if (!game.charging) return { pull: 16 + 4 * Math.sin(t * 3), bend: 0, alpha: 1 };
+      // Idle: the stick sits back a little further the higher the dial is set.
+      if (!game.charging) return { pull: 14 + chargePull(game.dial) * 0.22 + 4 * Math.sin(t * 3), bend: 0, alpha: 1 };
       const p = game.power;
       const shake = p * p * 3.5 + (p >= 1 ? 2.5 : 0);
       return {
@@ -79,8 +80,20 @@ export function drawCue(ctx: CanvasRenderingContext2D, game: Game, fx: Fx, cam: 
       }
     }
   }
-  drawStick(ctx, cue.x, cue.y, game.aim, pose.pull, pose.bend, pose.alpha, false);
-  if (game.phase === 'plan' && game.charging) drawPowerRing(ctx, cue.x, cue.y, game.power, fx.time);
+  // Side English: the stick lines up off-centre, where it will hit the ball.
+  const side = game.phase === 'plan' || game.phase === 'strike' ? game.rules.english ? game.englishX : 0 : 0;
+  const ox = -Math.sin(game.aim) * side * R * 0.55;
+  const oy = Math.cos(game.aim) * side * R * 0.55;
+  drawStick(ctx, cue.x + ox, cue.y + oy, game.aim, pose.pull, pose.bend, pose.alpha, false);
+  if (game.phase === 'plan') {
+    if (game.charging) drawPowerRing(ctx, cue.x, cue.y, game.power, fx.time);
+    else if (fx.dialShow > 0) {
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, fx.dialShow * 2) * 0.85;
+      drawPowerRing(ctx, cue.x, cue.y, game.dial, fx.time);
+      ctx.restore();
+    }
+  }
   void cam;
 }
 
@@ -315,9 +328,13 @@ export function drawGuide(
   ctx.save();
   ctx.globalAlpha = intro;
   ctx.lineCap = 'round';
-  if (Math.hypot(x1 - x0, y1 - y0) > 2 && (x1 - x0) * dx + (y1 - y0) * dy > 0) {
+  ctx.lineJoin = 'round';
+  const bent = g.curve && g.curve.length > 1;
+  if (bent || (Math.hypot(x1 - x0, y1 - y0) > 2 && (x1 - x0) * dx + (y1 - y0) * dy > 0)) {
     ctx.beginPath();
     ctx.moveTo(x0, y0);
+    // With side English the path bends through the skid before running straight.
+    if (bent) for (let i = 1; i < g.curve!.length; i++) ctx.lineTo(g.curve![i]!.x, g.curve![i]!.y);
     ctx.lineTo(x1, y1);
     ctx.lineWidth = 9;
     ctx.strokeStyle = 'rgba(20,8,40,0.35)';

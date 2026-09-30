@@ -1,4 +1,4 @@
-import { R } from '../config';
+import { A_SLIDE, R, SPIN_RANGE } from '../config';
 import { hyp } from '../core/vec';
 import type { Ball } from '../physics/world';
 import { closestOnSegment } from './polygon';
@@ -78,7 +78,19 @@ interface Hit {
   pocket?: Pocket;
 }
 
+/** The launch spin, for a guide that bends with English. */
+export interface GuideSpin {
+  speed: number;
+  /** Launch slip (sideways English). */
+  sx: number;
+  sy: number;
+  /** Banked draw (+) / follow (-). */
+  bank: number;
+}
+
 export interface Guide {
+  /** The skid while side English bends the path (absent without it). Ends where `path` starts. */
+  curve?: { x: number; y: number }[];
   path: Seg;
   kind: HitKind;
   /** Unit normal at contact: away from the rail, or from the object ball toward the cue. */
@@ -133,11 +145,62 @@ export function castGuide(
   dx: number,
   dy: number,
   followLen = 360,
+  spin?: GuideSpin,
 ): Guide {
-  const first = firstHit(geom, balls, cue.x, cue.y, dx, dy, cue.id, 5000);
-  const hx = cue.x + dx * first.t;
-  const hy = cue.y + dy * first.t;
-  const guide: Guide = { path: { x0: cue.x, y0: cue.y, x1: hx, y1: hy }, kind: first.kind, nx: 0, ny: 0 };
+  let ox = cue.x;
+  let oy = cue.y;
+  let curve: { x: number; y: number }[] | undefined;
+  let travelled = 0;
+  // Slip left over at the moment of contact (sideways English that has not finished bending).
+  let slipX = 0;
+  let slipY = 0;
+  let hit: Hit | null = null;
+  const s0 = spin ? hyp(spin.sx, spin.sy) : 0;
+  if (spin && s0 > 1) {
+    // The skid: p(t) = p0 + v0 t - A/2 s^ t^2 until the slip is gone (t = T), as in spinFriction.
+    const ux = spin.sx / s0;
+    const uy = spin.sy / s0;
+    const T = s0 / (3.5 * A_SLIDE);
+    const vx = dx * spin.speed;
+    const vy = dy * spin.speed;
+    curve = [{ x: ox, y: oy }];
+    const N = 14;
+    for (let k = 1; k <= N && !hit; k++) {
+      const t = (T * k) / N;
+      const px = cue.x + vx * t - 0.5 * A_SLIDE * ux * t * t;
+      const py = cue.y + vy * t - 0.5 * A_SLIDE * uy * t * t;
+      const sl = hyp(px - ox, py - oy);
+      if (sl > 1e-9) {
+        const h = firstHit(geom, balls, ox, oy, (px - ox) / sl, (py - oy) / sl, cue.id, sl);
+        if (h.kind !== 'none') {
+          hit = h;
+          dx = (px - ox) / sl;
+          dy = (py - oy) / sl;
+          const rem = 1 - k / N;
+          slipX = spin.sx * rem;
+          slipY = spin.sy * rem;
+          break;
+        }
+      }
+      travelled += sl;
+      ox = px;
+      oy = py;
+      curve.push({ x: px, y: py });
+    }
+    if (!hit) {
+      const fx = vx - A_SLIDE * ux * T;
+      const fy = vy - A_SLIDE * uy * T;
+      const fl = hyp(fx, fy) || 1;
+      dx = fx / fl;
+      dy = fy / fl;
+    }
+  }
+  const first = hit ?? firstHit(geom, balls, ox, oy, dx, dy, cue.id, 5000);
+  const hx = ox + dx * first.t;
+  const hy = oy + dy * first.t;
+  travelled += first.t;
+  const guide: Guide = { path: { x0: ox, y0: oy, x1: hx, y1: hy }, kind: first.kind, nx: 0, ny: 0 };
+  if (curve && curve.length > 1) guide.curve = curve;
 
   if (first.kind === 'rail' && first.rail) {
     const r = first.rail;
@@ -166,15 +229,24 @@ export function castGuide(
     guide.nx = nx;
     guide.ny = ny;
     guide.target = { ball: b, dx: -nx, dy: -ny };
-    // Equal masses: the cue keeps the tangential part of its velocity.
+    // Equal masses: the cue keeps the tangential part of its velocity...
     const dn = dx * nx + dy * ny;
     let tx = dx - dn * nx;
     let ty = dy - dn * ny;
+    if (spin) {
+      // ...and English then works on it: draw/follow (faded with distance) joins the slip, and
+      // the ball ends up heading along v - (2/7) s.
+      const bank = spin.bank * Math.max(0, 1 - travelled / SPIN_RANGE);
+      const sx = (slipX + bank * dx) / spin.speed;
+      const sy = (slipY + bank * dy) / spin.speed;
+      tx -= (2 / 7) * sx;
+      ty -= (2 / 7) * sy;
+    }
     const tl = hyp(tx, ty);
     if (tl > 1e-3) {
       tx /= tl;
       ty /= tl;
-      const len = followLen * 0.5 * tl;
+      const len = followLen * 0.5 * Math.min(1.4, tl);
       guide.deflect = { x0: hx, y0: hy, x1: hx + tx * len, y1: hy + ty * len };
     }
   } else if (first.kind === 'hole') {

@@ -87,6 +87,28 @@ export const SIM_TIMEOUT = 25; // seconds of sim time before the ref calls it
 export const SETTLE_GRACE = 0.2;
 export const HIT_EVENT_MIN = 40;
 
+// ---------------------------------------------------------------- English (cue spin)
+/** Cloth friction while the cue ball skids (slip = contact velocity), u/s^2. */
+export const A_SLIDE = 2500;
+/** Below this slip the ball counts as rolling. */
+export const SLIP_EPS = 1;
+/** Draw/follow strength: banked spin = ey * K_ROLL * launch speed. */
+export const K_ROLL = 1.0;
+/** Banked draw/follow wears off over roughly this much travel. */
+export const SPIN_RANGE = 900;
+/** Sideways slip per unit of side English; 3.5 * tan(25deg), so a full curve bends exactly 25deg. */
+export const K_C = 1.632;
+/** Sidespin (cushion throw) per unit of side English. */
+export const K_SIDE = 1.0;
+/** Cushion throw per unit of sidespin... */
+export const K_THROW = 0.35;
+/** ...capped by cushion friction: at most MU_C (1 + e) |vn|. */
+export const MU_C = 0.25;
+/** Fraction of sidespin left after a cushion. */
+export const WZ_RAIL_KEEP = 0.5;
+/** Sidespin decay per second. */
+export const WZ_DECAY = 0.6;
+
 // ---------------------------------------------------------------- shot
 export const V_SHOT_MIN = 350;
 export const V_SHOT_MAX = 2300;

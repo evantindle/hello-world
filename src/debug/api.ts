@@ -60,8 +60,15 @@ export function installDebugApi(d: DebugDeps): void {
       game.skipSpin();
       return stepUntil(() => game.phase !== 'spin', 5);
     },
+    /** Sets the dial and presses SHOOT (the windup then plays out as time is stepped). */
     shoot(power: number) {
       return game.shoot(power);
+    },
+    setDial(v: number) {
+      game.setDial(v);
+    },
+    setEnglish(x: number, y: number) {
+      game.setEnglish(x, y);
     },
     dragVertex(index: number, x: number, y: number): MoveResult | null {
       const v = game.table.verts[index];

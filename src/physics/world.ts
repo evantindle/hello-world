@@ -23,6 +23,7 @@ import { centroid, nearestBoundary, pointInPolygon } from '../geom/polygon';
 import type { Pocket, Rail, TableGeom } from '../geom/table';
 import { clearTally, type Ball } from './ball';
 import { logBallHit, logCushion, logPot, newLog, type TurnLog } from './log';
+import { clearSpinState, cushionSpin, hasSpin, releaseBank, spinFriction } from './spin';
 
 export { makeBall, type Ball, type BallVariant, type Suit } from './ball';
 export type { TurnLog } from './log';
@@ -43,6 +44,8 @@ export type PhysEvent =
     }
   | { type: 'pocketed'; ball: Ball; pocket: Pocket; vx: number; vy: number }
   | { type: 'rescued'; ball: Ball }
+  /** Sidespin threw the cue ball along a cushion. */
+  | { type: 'kick'; ball: Ball; x: number; y: number; dv: number }
   | { type: 'stopped'; timedOut: boolean };
 
 export interface World {
@@ -279,6 +282,10 @@ export function collideBalls(a: Ball, b: Ball, out: PhysEvent[]): void {
   const vn = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
   if (vn >= 0) return;
   const e = -vn < REST_SPEED ? 0 : E_BALL;
+  const avx = a.vx;
+  const avy = a.vy;
+  const bvx = b.vx;
+  const bvy = b.vy;
   if (-vn > HIT_EVENT_MIN) {
     if (a.kind === 'cue') a.braking = true;
     else if (b.kind === 'cue') b.braking = true;
@@ -298,6 +305,9 @@ export function collideBalls(a: Ball, b: Ball, out: PhysEvent[]): void {
     b.vy += ny * j * ib;
   }
   if (-vn > HIT_EVENT_MIN) {
+    // English: banked draw/follow goes into the slip at the cue ball's first real contact.
+    if (a.bank !== 0) releaseBank(a, avx, avy);
+    if (b.bank !== 0) releaseBank(b, bvx, bvy);
     out.push({ type: 'ballHit', a, b, x: a.x + nx * R, y: a.y + ny * R, nx, ny, speed: -vn });
   }
 }
@@ -331,6 +341,7 @@ export function collideRail(b: Ball, r: Rail, out: PhysEvent[]): void {
   const ty = b.vy - ny * vn;
   b.vx = tx * T_DAMP - nx * vn * e;
   b.vy = ty * T_DAMP - ny * vn * e;
+  const kick = b.kind === 'cue' && hasSpin(b) ? cushionSpin(b, nx, ny, vn, e) : 0;
   if (-vn > HIT_EVENT_MIN) {
     if (b.kind === 'cue') {
       b.rails++;
@@ -347,6 +358,7 @@ export function collideRail(b: Ball, r: Rail, out: PhysEvent[]): void {
       ny,
       speed: -vn,
     });
+    if (kick > 150 || kick < -150) out.push({ type: 'kick', ball: b, x: qx, y: qy, dv: Math.abs(kick) });
   }
 }
 
@@ -442,6 +454,15 @@ function friction(w: World, h: number): void {
   for (let i = 0; i < balls.length; i++) {
     const b = balls[i]!;
     if (!b.active) continue;
+    if (b.kind === 'cue' && (b.eng > 0 || hasSpin(b))) {
+      const skidding = spinFriction(b, h, 1);
+      if (!skidding && hyp(b.vx, b.vy) < V_STOP && !w.pulled[i] && !w.driven[i]) {
+        b.vx = 0;
+        b.vy = 0;
+        clearSpinState(b);
+      }
+      continue;
+    }
     const sp = hyp(b.vx, b.vy);
     if (sp === 0) continue;
     const k = b.braking ? CUE_BRAKE : 1;

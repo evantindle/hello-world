@@ -68,7 +68,7 @@ test('a full turn: spin, bend, smack, settle', async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
-test('real pointer input: drag a knob with the mouse, hold the SMACK button', async ({ page }) => {
+test('real pointer input: drag a knob, turn the dial, put on English, press SMACK', async ({ page }) => {
   const errors: string[] = [];
   // Reduced motion stops the bouncing PLAY button (and exercises that CSS path).
   await page.emulateMedia({ reducedMotion: 'reduce' });
@@ -96,12 +96,21 @@ test('real pointer input: drag a knob with the mouse, hold the SMACK button', as
   expect(after.verts[3].x).toBeGreaterThan(knob.x + 20);
   expect(after.budget).toBeLessThan(600);
 
-  // Hold the SMACK button, then let go.
-  const shoot = page.getByRole('button', { name: 'Hold to charge, release to shoot' });
-  await shoot.hover();
+  // Turn the power dial with the keyboard, drag some draw onto the English widget, SMACK.
+  const dial0 = await page.evaluate(() => window.__bendy.game.dial);
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('Shift+ArrowUp');
+  expect(await page.evaluate(() => window.__bendy.game.dial)).toBeCloseTo(Math.min(1, dial0 + 0.12), 5);
+  const spinBall = page.locator('.spinw-ball');
+  const sb = (await spinBall.boundingBox())!;
+  await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2);
   await page.mouse.down();
-  await page.waitForTimeout(700);
+  await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height * 0.85, { steps: 4 });
   await page.mouse.up();
+  const eng = await page.evaluate(() => ({ x: window.__bendy.game.englishX, y: window.__bendy.game.englishY }));
+  expect(eng.y).toBeGreaterThan(0.5);
+  await page.screenshot({ path: `${SHOTS}/05b-dial.png` });
+  await page.getByRole('button', { name: 'Shoot' }).click();
   await page.waitForFunction(() => ['strike', 'sim', 'resolve'].includes(window.__bendy.phase()));
   expect(await page.evaluate(() => window.__bendy.state().shots)).toBe(1);
   expect(errors).toEqual([]);

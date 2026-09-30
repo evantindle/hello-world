@@ -1,5 +1,7 @@
-import { BALL_COLORS, BUDGET, GAME_TITLE } from '../config';
+import { BALL_COLORS, GAME_TITLE } from '../config';
 import type { Game, GameOverInfo } from '../game/game';
+import { PowerDial } from './widgets/dial';
+import { SpinWidget } from './widgets/spin';
 
 const ICON_SOUND =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path d="M16 8.5c1.2 1 1.8 2.2 1.8 3.5s-.6 2.5-1.8 3.5M18.5 6c2 1.6 3 3.6 3 6s-1 4.4-3 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
@@ -15,6 +17,8 @@ export interface HudHooks {
   isMuted: () => boolean;
   gesture: () => void;
   press: () => void;
+  /** The English dot was dragged onto the cue ball's eye. */
+  ouch: () => void;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -47,9 +51,9 @@ export class Hud {
   private stretchFill: HTMLElement;
   private stretchNum: HTMLElement;
   private undo: HTMLButtonElement;
-  private shoot: HTMLButtonElement;
-  private shootFill: HTMLElement;
-  private shootLabel: HTMLElement;
+  private cluster: HTMLElement;
+  private dial: PowerDial;
+  private spin: SpinWidget;
   private hint: HTMLElement;
   private hunger: HTMLElement;
   private banner: HTMLElement;
@@ -59,7 +63,6 @@ export class Hud {
   private over: HTMLElement;
   private lastScore = -1;
   private lastBest: number | null = -1;
-  private shootPointer: number | null = null;
   private lastHint = '';
 
   constructor(
@@ -122,32 +125,21 @@ export class Hud {
     meter.append(this.stretchFill, el('div', 'meter-label', 'STRETCH'), this.stretchNum);
     this.stretch.append(this.undo, meter);
     this.hint = el('div', 'hint');
-    this.shoot = el('button', 'shoot') as HTMLButtonElement;
-    this.shootFill = el('span', 'shoot-fill');
-    this.shootLabel = el('span', 'shoot-label', 'HOLD TO<br>SMACK');
-    this.shoot.append(this.shootFill, this.shootLabel);
-    this.shoot.setAttribute('aria-label', 'Hold to charge, release to shoot');
-    this.shoot.addEventListener('pointerdown', (e) => {
-      this.hooks.gesture();
-      if (this.game.beginCharge()) {
-        this.shootPointer = e.pointerId;
-        e.preventDefault();
-      }
+    this.dial = new PowerDial({
+      get: () => this.game.dial,
+      set: (v) => this.game.setDial(v),
+      shoot: () => this.game.shoot(),
+      gesture: () => this.hooks.gesture(),
     });
-    window.addEventListener('pointerup', (e) => {
-      if (e.pointerId === this.shootPointer) {
-        this.shootPointer = null;
-        this.game.releaseCharge();
-      }
+    this.spin = new SpinWidget({
+      get: () => ({ x: this.game.englishX, y: this.game.englishY }),
+      set: (x, y) => this.game.setEnglish(x, y),
+      gesture: () => this.hooks.gesture(),
+      ouch: () => this.hooks.ouch(),
     });
-    window.addEventListener('pointercancel', (e) => {
-      if (e.pointerId === this.shootPointer) {
-        this.shootPointer = null;
-        this.game.cancelCharge();
-      }
-    });
-    this.shoot.addEventListener('contextmenu', (e) => e.preventDefault());
-    bottom.append(this.stretch, this.hint, this.shoot);
+    this.cluster = el('div', 'shoot-cluster');
+    this.cluster.append(this.spin.el, this.dial.el);
+    bottom.append(this.stretch, this.hint, this.cluster);
 
     this.title = this.buildTitle();
     this.over = el('div', 'overlay over hidden');
@@ -165,7 +157,7 @@ export class Hud {
       <ol class="steps">
         <li><span class="step-n">1</span><span><b>The cue spins</b> and lands wherever it likes.</span></li>
         <li><span class="step-n">2</span><span><b>Drag the knobs</b> to bend the table. Grab a <b>＋</b> to add a new bend.</span></li>
-        <li><span class="step-n">3</span><span><b>Hold SMACK</b> to charge, let go to shoot. Clear all 10 balls in as few strokes as you can.</span></li>
+        <li><span class="step-n">3</span><span><b>Set the power dial</b> and hit <b>SMACK</b>. Clear all 10 balls in as few strokes as you can.</span></li>
       </ol>
       <p class="fine">Miss, and the pockets get <b>hungry</b>. Scratch, and the cue ball gets spat back out (+1 stroke).</p>`;
     const play = el('button', 'btn big play', 'PLAY!') as HTMLButtonElement;
@@ -177,6 +169,14 @@ export class Hud {
     card.append(play);
     o.append(card);
     return o;
+  }
+
+  /** CSS px the top and bottom HUD bars take up (the camera keeps the table clear of them). */
+  bands(): { top: number; bottom: number } {
+    const root = this.hint.parentElement!.parentElement!;
+    const top = root.querySelector('.hud-top')!.getBoundingClientRect();
+    const bottom = root.querySelector('.hud-bottom')!.getBoundingClientRect();
+    return { top: top.bottom, bottom: Math.max(0, window.innerHeight - bottom.top) };
   }
 
   refreshMute(): void {
@@ -211,29 +211,30 @@ export class Hud {
     }
     const planning = g.phase === 'plan';
     this.stretch.classList.toggle('show', planning);
-    const frac = Math.max(0, Math.min(1, g.budget / BUDGET));
+    const lim = g.rules.reshape;
+    const budgeted = lim.kind === 'budget';
+    const frac = budgeted ? Math.max(0, Math.min(1, g.budget / lim.perTurn)) : 1;
+    this.stretch.classList.toggle('unlimited', !budgeted);
     this.stretchFill.style.transform = `scaleX(${frac})`;
     this.stretchFill.classList.toggle('low', frac < 0.25);
-    this.stretchNum.textContent = planning ? String(Math.round(g.budget)) : '';
+    this.stretchNum.textContent = planning && budgeted ? String(Math.round(g.budget)) : '';
     this.undo.disabled = !g.canUndo;
-    this.shoot.classList.toggle('show', planning);
-    this.shoot.classList.toggle('charging', g.charging);
-    this.shoot.classList.toggle('max', g.charging && g.power >= 1);
-    this.shootFill.style.transform = `scaleY(${g.charging ? g.power : 0})`;
-    const label = g.charging ? (g.power >= 1 ? 'LET<br>GO!!' : 'LET GO<br>TO SMACK') : 'HOLD TO<br>SMACK';
-    if (this.shootLabel.innerHTML !== label) this.shootLabel.innerHTML = label;
+    this.cluster.classList.toggle('show', planning);
+    this.dial.button.classList.toggle('show', planning);
+    this.dial.update(g.dial, g.charging, g.power);
+    this.spin.update(planning && g.rules.english);
     this.hunger.classList.toggle('show', g.hunger > 0 && g.phase !== 'title' && g.phase !== 'over');
     this.hunger.dataset.level = String(g.hunger);
     const hungerText = ['', 'POCKETS: PECKISH', 'POCKETS: HUNGRY', 'POCKETS: RAVENOUS'][g.hunger] ?? '';
     if (this.hunger.textContent !== hungerText) this.hunger.textContent = hungerText;
     let hint = '';
     if (g.phase === 'spin') hint = 'Spinning… tap to skip';
-    else if (planning && g.charging) hint = g.power >= 1 ? 'MAXIMUM SMACK. Let go!' : 'Let go to smack it!';
+    else if (planning && g.charging) hint = 'Winding up…';
     else if (planning)
       hint =
         g.table.verts.length < 12
-          ? 'Drag the knobs to bend the table · grab a ＋ to add a bend · hold SMACK'
-          : 'Drag the knobs to bend the table · hold SMACK';
+          ? 'Drag the knobs to bend the table · grab a ＋ to add a bend · set the power · SMACK!'
+          : 'Drag the knobs to bend the table · set the power · SMACK!';
     else if (g.phase === 'respawn') hint = 'The pocket did not like the taste of that.';
     if (hint !== this.lastHint) {
       this.hint.textContent = hint;

@@ -34,6 +34,7 @@ function playScripted(seed: number, strokes: number): Game {
       g.endDrag();
     }
     g.shoot(rng.range(0.3, 1));
+    runUntil(g, () => phase() !== 'plan'); // the windup
   }
   runUntil(g, () => phase() === 'plan' || phase() === 'over');
   return g;
@@ -77,6 +78,7 @@ describe('determinism', () => {
         runUntil(g, () => g.phase === 'plan');
         out.push(g.aim);
         g.shoot(0.1);
+        runUntil(g, () => g.phase !== 'plan'); // the windup
         // The next spin picks its angle as it starts, so force it before then.
         if (force && k === 0) g.forcedAngle = 1;
         runUntil(g, () => g.phase === 'spin' || g.phase === 'over');

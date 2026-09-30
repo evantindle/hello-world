@@ -10,13 +10,12 @@ import {
   SLOWMO_SCALE,
   STRIKE_HOLD,
   STRIKE_LUNGE,
-  TAP_CANCEL,
 } from '../config';
 import { damp } from '../core/easing';
 import { Emitter } from '../core/emitter';
 import { randomSeed, rngFor, subSeed } from '../core/rng';
 import { clamp01, hyp, TAU, wrapTau } from '../core/vec';
-import { castGuide, type Guide } from '../geom/raycast';
+import { castGuide, type Guide, type GuideSpin } from '../geom/raycast';
 import { buildGeom, cloneTable, createTable, type Pocket, type Table, type TableGeom } from '../geom/table';
 import { launchFrom } from '../physics/launch';
 import { createWorld, stepWorld, type Ball, type PhysEvent, type World } from '../physics/world';
@@ -65,7 +64,9 @@ export interface GameEvents {
   spinTick: { speed: number; count: number };
   spinLand: { angle: number };
   chargeStart: { power: number };
-  chargeCancel: { reason: 'tap' | 'drag' };
+  chargeCancel: { reason: 'cancel' };
+  dial: { value: number };
+  english: { x: number; y: number };
   strike: { power: number; x: number; y: number; dx: number; dy: number; speed: number };
   phys: PhysEvent;
   dragStart: { vid: number; inserted: boolean; x: number; y: number };
@@ -129,9 +130,17 @@ export class Game implements ReshapeHost {
   aim = Math.PI;
   /** Where the current spin will land, in [0, TAU): the aim is set to exactly this. */
   spinTarget = Math.PI;
+  /** The auto-windup after SHOOT (the stick pulls back to the dial's power, then strikes). */
   charging = false;
   chargeT = 0;
   strikePower = 0;
+  /** Power dial in thousandths (exact, so shots quantize without rounding surprises). */
+  dialQ = 600;
+  /** English on the cue ball: x + is right of the aim line, y + is draw. Within the unit disc. */
+  englishX = 0;
+  englishY = 0;
+  /** Seconds the current windup takes. */
+  private windup = 1;
   /** The last shot, quantized (what replays and shared links store). */
   shot: ShotQ | null = null;
   /** Every stroke of this game so far, recorded. */
@@ -198,9 +207,14 @@ export class Game implements ReshapeHost {
     return n;
   }
 
-  /** Charge level 0..1 while holding the shot. */
+  /** The dial setting, 0..1. */
+  get dial(): number {
+    return this.dialQ / 1000;
+  }
+
+  /** Power on show: rises to the dial during the windup, otherwise the dial itself. */
   get power(): number {
-    return clamp01(this.chargeT / CHARGE_TIME);
+    return this.charging ? this.dial * clamp01(this.chargeT / this.windup) : this.dial;
   }
 
   get canReshape(): boolean {
@@ -212,7 +226,14 @@ export class Game implements ReshapeHost {
   }
 
   guide(): Guide {
-    return castGuide(this.geom, this.balls, this.cue, Math.cos(this.aim), Math.sin(this.aim));
+    let spin: GuideSpin | undefined;
+    if (this.rules.english && (this.englishX !== 0 || this.englishY !== 0)) {
+      // Launch a copy of the cue ball to read off the exact spin the real shot will have.
+      const probe = { ...this.cue };
+      const { speed } = launchFrom(probe, quantizeShot(this.aim, this.dial, this.englishX, this.englishY));
+      spin = { speed, sx: probe.sx, sy: probe.sy, bank: probe.bank };
+    }
+    return castGuide(this.geom, this.balls, this.cue, Math.cos(this.aim), Math.sin(this.aim), 360, spin);
   }
 
   // ------------------------------------------------------------------ flow
@@ -220,7 +241,7 @@ export class Game implements ReshapeHost {
   private setup(s: GameSetup): void {
     // Wind down anything in flight so listeners (sounds, vignette) are told it stopped.
     if (this.drag) this.endDrag();
-    if (this.charging) this.cancelCharge();
+    if (this.charging) this.cancelShot();
     if (this.slowmo) this.setSlowmo(false);
     this.lastSetup = s;
     this.history = [];
@@ -317,7 +338,8 @@ export class Game implements ReshapeHost {
         this.scratchPocket = null;
         this.timedOut = false;
         const cue = this.cue;
-        this.shot = quantizeShot(this.aim, this.strikePower);
+        const eng = this.rules.english;
+        this.shot = quantizeShot(this.aim, this.strikePower, eng ? this.englishX : 0, eng ? this.englishY : 0);
         this.pending = { stroke: this.shots, aim: this.aim, shot: this.shot, pre: snapState(this) };
         const { dx, dy, speed } = launchFrom(cue, this.shot);
         this.events.emit('strike', { power: this.strikePower, x: cue.x, y: cue.y, dx, dy, speed });
@@ -366,7 +388,14 @@ export class Game implements ReshapeHost {
       }
       case 'plan':
         this.phaseT += dtReal;
-        if (this.charging) this.chargeT += dtReal;
+        if (this.charging) {
+          this.chargeT += dtReal;
+          if (this.chargeT >= this.windup) {
+            this.charging = false;
+            this.strikePower = this.dial;
+            this.enter('strike');
+          }
+        }
         break;
       case 'strike':
         this.phaseT += dtReal;
@@ -526,41 +555,51 @@ export class Game implements ReshapeHost {
     if (this.phase === 'spin') this.spin.fastForward();
   }
 
-  beginCharge(): boolean {
+  setDial(v: number): void {
+    const q = Math.round(clamp01(v) * 1000);
+    if (q === this.dialQ) return;
+    this.dialQ = q;
+    this.events.emit('dial', { value: this.dial });
+  }
+
+  nudgeDial(d: number): void {
+    this.setDial(this.dial + d);
+  }
+
+  /** English from the spin widget: x + right of the aim line, y + draw. Clamped to the disc. */
+  setEnglish(x: number, y: number): void {
+    const m = hyp(x, y);
+    if (m > 1) {
+      x /= m;
+      y /= m;
+    }
+    if (x === this.englishX && y === this.englishY) return;
+    this.englishX = x;
+    this.englishY = y;
+    this.events.emit('english', { x, y });
+  }
+
+  /**
+   * SHOOT: the stick winds up to the dial's power (bigger shots take longer to wind up) and
+   * strikes. `power`, if given, sets the dial first.
+   */
+  shoot(power?: number): boolean {
     if (this.phase !== 'plan' || this.charging) return false;
+    if (power !== undefined) this.setDial(power);
     if (this.drag) this.endDrag();
     this.charging = true;
     this.chargeT = 0;
-    this.events.emit('chargeStart', { power: 0 });
+    this.windup = Math.max(0.25, Math.min(CHARGE_TIME, CHARGE_TIME * this.dial));
+    this.events.emit('chargeStart', { power: this.dial });
     return true;
   }
 
-  releaseCharge(): void {
-    if (!this.charging) return;
-    this.charging = false;
-    if (this.chargeT < TAP_CANCEL) {
-      this.chargeT = 0;
-      this.events.emit('chargeCancel', { reason: 'tap' });
-      return;
-    }
-    this.strikePower = this.power;
-    this.enter('strike');
-  }
-
-  /** Abort a charge without shooting (pointer cancelled, window lost focus). */
-  cancelCharge(): void {
+  /** Stop a windup before it strikes (Escape, focus lost, a new game). */
+  cancelShot(): void {
     if (!this.charging) return;
     this.charging = false;
     this.chargeT = 0;
-    this.events.emit('chargeCancel', { reason: 'drag' });
-  }
-
-  /** Test/demo helper: charge to `power` (0..1) and let rip. */
-  shoot(power: number): boolean {
-    if (!this.beginCharge()) return false;
-    this.chargeT = Math.max(TAP_CANCEL, clamp01(power) * CHARGE_TIME);
-    this.releaseCharge();
-    return true;
+    this.events.emit('chargeCancel', { reason: 'cancel' });
   }
 
   undo(): boolean {

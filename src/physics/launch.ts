@@ -1,6 +1,7 @@
 import { V_SHOT_MAX, V_SHOT_MIN } from '../config';
 import { hyp } from '../core/vec';
 import { clearSpin, type Ball } from './ball';
+import { launchSpin } from './spin';
 
 /**
  * A shot, quantized to integers so it can be recorded, shared and replayed bit-for-bit anywhere:
@@ -31,5 +32,6 @@ export function launchFrom(cue: Ball, q: ShotQ): { dx: number; dy: number; speed
   clearSpin(cue);
   cue.vx = dx * speed;
   cue.vy = dy * speed;
+  if (q.ex !== 0 || q.ey !== 0) launchSpin(cue, dx, dy, speed, q.ex, q.ey);
   return { dx, dy, speed };
 }

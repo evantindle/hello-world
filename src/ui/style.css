@@ -653,6 +653,216 @@ body {
   }
 }
 
+/* ------------------------------------------------------------------ power dial + English */
+
+.shoot-cluster {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex: none;
+}
+
+.dial {
+  position: relative;
+  width: clamp(120px, 13vw, 150px);
+  height: clamp(120px, 13vw, 150px);
+  display: grid;
+  place-items: center;
+  flex: none;
+  opacity: 0;
+  transform: scale(0.4) rotate(-40deg);
+  transition:
+    opacity 0.25s,
+    transform 0.4s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+
+.shoot-cluster.show .dial {
+  opacity: 1;
+  transform: none;
+}
+
+.dial-ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  touch-action: none;
+  cursor: pointer;
+}
+
+.shoot-cluster.show .dial-ring {
+  pointer-events: auto;
+}
+
+.dial-outline {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 25;
+  stroke-linecap: round;
+}
+
+.dial-track {
+  fill: none;
+  stroke: #3a2266;
+  stroke-width: 17;
+  stroke-linecap: round;
+}
+
+.dial-value {
+  fill: none;
+  stroke-width: 11;
+  stroke-linecap: round;
+  stroke: var(--green);
+  transition: stroke 0.2s;
+}
+
+.dial[data-zone='mid'] .dial-value {
+  stroke: var(--yellow);
+}
+
+.dial[data-zone='hard'] .dial-value {
+  stroke: var(--pink);
+}
+
+.dial-tick {
+  stroke: rgba(255, 248, 231, 0.55);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+.dial-knob {
+  fill: var(--cream);
+  stroke: var(--ink);
+  stroke-width: 4;
+}
+
+.dial .shoot {
+  width: 60%;
+  height: 60%;
+}
+
+.dial.charging .dial-ring {
+  animation: jitter 0.09s infinite;
+}
+
+.dial-pct {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  font-family: var(--display);
+  font-size: 19px;
+  letter-spacing: 1px;
+  color: var(--cream);
+  -webkit-text-stroke: 1.5px var(--ink);
+  paint-order: stroke fill;
+  text-shadow: 0 2px 0 var(--ink);
+  pointer-events: none;
+}
+
+.spinw {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding-bottom: 10px;
+  opacity: 0;
+  transform: translateY(20px) scale(0.6);
+  transition:
+    opacity 0.25s,
+    transform 0.35s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+
+.spinw.show {
+  opacity: 1;
+  transform: none;
+}
+
+.shoot-cluster.show .spinw.show .spinw-ball {
+  pointer-events: auto;
+}
+
+.spinw-ball {
+  position: relative;
+  width: 66px;
+  height: 66px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffffff 0 18%, var(--cream) 46%, #e6d9bd 100%);
+  border: 3px solid var(--ink);
+  box-shadow: 0 4px 0 var(--ink);
+  touch-action: none;
+  cursor: grab;
+}
+
+.spinw-eye {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 2px solid var(--ink);
+  display: grid;
+  place-items: center;
+}
+
+.spinw-eye i {
+  display: block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink);
+  transition: transform 0.08s;
+}
+
+.spinw-ball.ouch .spinw-eye {
+  background: none;
+  border-color: transparent;
+}
+
+.spinw-ball.ouch .spinw-eye i {
+  display: none;
+}
+
+.spinw-ball.ouch .spinw-eye::after {
+  content: '>';
+  font: 17px/1 var(--display);
+  color: var(--ink);
+}
+
+.spinw-ball.ouch .spinw-eye + .spinw-eye::after {
+  content: '<';
+}
+
+.spinw-dot {
+  position: absolute;
+  width: 17px;
+  height: 17px;
+  margin: -8.5px 0 0 -8.5px;
+  border-radius: 50%;
+  background: var(--blue);
+  border: 2.5px solid var(--ink);
+  box-shadow: 0 0 0 3px rgba(58, 134, 255, 0.35);
+  pointer-events: none;
+  transition:
+    left 0.05s,
+    top 0.05s;
+}
+
+.spinw-tag {
+  font-family: var(--display);
+  font-size: 14px;
+  letter-spacing: 1px;
+  white-space: nowrap;
+  color: var(--cream);
+  text-shadow: 0 2px 0 var(--ink);
+}
+
+.stretch.unlimited .meter {
+  display: none;
+}
+
 /* ------------------------------------------------------------------ overlays */
 
 .overlay {
@@ -923,11 +1133,51 @@ body {
     top: calc(max(10px, env(safe-area-inset-top)) + 50px);
     font-size: 15px;
   }
+  .dial {
+    width: 128px;
+    height: 128px;
+  }
+  .spinw-ball {
+    width: 58px;
+    height: 58px;
+  }
 }
 
 @media (max-width: 460px) {
   .rack {
     display: none;
+  }
+  .hud-bottom {
+    gap: 6px;
+  }
+  .meter {
+    width: 84px;
+  }
+  .meter-num {
+    display: none;
+  }
+  .shoot-cluster {
+    gap: 2px;
+  }
+  .dial {
+    width: 112px;
+    height: 112px;
+  }
+  .dial-pct {
+    font-size: 16px;
+  }
+  .spinw-ball {
+    width: 50px;
+    height: 50px;
+  }
+  .spinw-eye {
+    width: 13px;
+    height: 13px;
+    margin: -6.5px 0 0 -6.5px;
+  }
+  .spinw-eye i {
+    width: 6px;
+    height: 6px;
   }
 }
 
@@ -942,13 +1192,24 @@ body {
   .hud-bottom {
     position: static;
   }
-  .shoot {
+  .shoot-cluster {
     position: absolute;
     right: var(--pad);
     top: 50%;
-    margin-top: -46px;
-    width: 92px;
-    height: 92px;
+    transform: translateY(-50%);
+    flex-direction: column-reverse;
+    align-items: center;
+  }
+  .dial {
+    width: 122px;
+    height: 122px;
+  }
+  .spinw {
+    padding-bottom: 0;
+  }
+  .spinw-ball {
+    width: 54px;
+    height: 54px;
   }
   .stretch {
     position: absolute;
