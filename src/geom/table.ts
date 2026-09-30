@@ -1,6 +1,7 @@
 import {
   CAPTURE_R,
   CUE_CAPTURE_R,
+  E_WALL,
   HOLE_OFFSET,
   HUNGER_CAPTURE,
   HUNGER_SUCTION,
@@ -14,11 +15,36 @@ import {
   PLAY,
   POCKET_OPEN_TURN,
   SUCTION_R,
+  T_DAMP,
   TABLE_H,
   TABLE_W,
 } from '../config';
 import { hyp, type Vec } from '../core/vec';
+import type { Suit } from '../physics/ball';
+import { cloneParts, type Part } from './parts';
 import { angleAbove, angleBelow, distToSegment, segmentsIntersect, signedArea } from './polygon';
+
+/** What a stretch of cushion is made of. */
+export type RailMaterial = 'felt' | 'steel' | 'trampoline' | 'dead';
+
+/** Bounce and grip per material. Steel plays like felt but cannot be bent (no new bends). */
+export const RAIL_MATS: Record<RailMaterial, { e: number; tdamp: number }> = {
+  felt: { e: E_WALL, tdamp: T_DAMP },
+  steel: { e: E_WALL, tdamp: T_DAMP },
+  trampoline: { e: 1.3, tdamp: 0.97 },
+  dead: { e: 0.35, tdamp: 0.8 },
+};
+
+/** Special pockets. */
+export type PocketTrait =
+  /** Plugged for this many more strokes. */
+  | { kind: 'corked'; strokes: number }
+  /** Only swallows balls of its own suit; spits the rest back out. */
+  | { kind: 'picky'; suit: Suit }
+  /** Opens and shuts on a beat during the shot: open for `open` of every `period` seconds. */
+  | { kind: 'chomper'; period: number; open: number; phase: number }
+  /** Only takes balls arriving slower than vmax. */
+  | { kind: 'gentle'; vmax: number };
 
 export interface TableVertex {
   /** Stable identity across insertions and removals. */
@@ -26,10 +52,16 @@ export interface TableVertex {
   x: number;
   y: number;
   pocket: boolean;
+  /** Bolted down: this knob cannot be dragged. */
+  bolted?: boolean;
+  /** Material of the edge that starts at this vertex (default felt). */
+  mat?: RailMaterial;
+  trait?: PocketTrait;
 }
 
 export interface Table {
   verts: TableVertex[];
+  parts: Part[];
   nextId: number;
 }
 
@@ -47,6 +79,10 @@ export interface Rail {
   /** Parameter range of this rail along its full edge. */
   t0: number;
   t1: number;
+  mat: RailMaterial;
+  /** Restitution and tangential grip (from the material). */
+  e: number;
+  tdamp: number;
 }
 
 export interface Pocket {
@@ -72,6 +108,9 @@ export interface Pocket {
   rc: number;
   /** Suction radius: object balls inside it get pulled toward the hole. */
   sr: number;
+  trait: PocketTrait | null;
+  /** A chomper's jaws: a wall across the mouth, solid while they are shut. */
+  plug: Rail | null;
 }
 
 export interface TableGeom {
@@ -94,12 +133,23 @@ export function createTable(): Table {
   ];
   return {
     verts: pts.map(([x, y], i) => ({ id: i, x, y, pocket: true })),
+    parts: [],
     nextId: pts.length,
   };
 }
 
 export function cloneTable(t: Table): Table {
-  return { verts: t.verts.map((v) => ({ ...v })), nextId: t.nextId };
+  return {
+    verts: t.verts.map((v) => (v.trait ? { ...v, trait: { ...v.trait } } : { ...v })),
+    parts: cloneParts(t.parts ?? []),
+    nextId: t.nextId,
+  };
+}
+
+/** A chomper is open at sim time t (modulo arithmetic only: exact everywhere). */
+export function chomperOpen(tr: { period: number; open: number; phase: number }, t: number): boolean {
+  const u = (t + tr.phase) % tr.period;
+  return u < tr.open * tr.period;
 }
 
 export function vertexIndex(t: Table, id: number): number {
@@ -141,7 +191,8 @@ export function buildGeom(t: Table, hunger = 0): TableGeom {
     // Display only: the open test below avoids atan2 so every browser agrees at the threshold.
     // eslint-disable-next-line no-restricted-properties
     const angle = Math.PI - Math.atan2(d1x * d2y - d1y * d2x, d1x * d2x + d1y * d2y);
-    const open = !angleBelow(a, v, b, POCKET_OPEN_TURN);
+    // Squeezed shut, or corked: either way the rails run straight across.
+    const open = !angleBelow(a, v, b, POCKET_OPEN_TURN) && v.trait?.kind !== 'corked';
     openAt[i] = open;
     pockets.push({
       index: i,
@@ -157,6 +208,8 @@ export function buildGeom(t: Table, hunger = 0): TableGeom {
       r: captureR,
       rc: CUE_CAPTURE_R,
       sr: suctionR,
+      trait: v.trait ?? null,
+      plug: null,
     });
   }
 
@@ -170,6 +223,7 @@ export function buildGeom(t: Table, hunger = 0): TableGeom {
     let t0 = openAt[i] ? MOUTH / L : 0;
     let t1 = openAt[(i + 1) % n] ? 1 - MOUTH / L : 1;
     if (t0 > t1) t0 = t1 = (t0 + t1) / 2;
+    const mat = a.mat ?? 'felt';
     rails.push({
       ax: a.x + dx * t0,
       ay: a.y + dy * t0,
@@ -180,7 +234,28 @@ export function buildGeom(t: Table, hunger = 0): TableGeom {
       edge: i,
       t0,
       t1,
+      mat,
+      e: RAIL_MATS[mat].e,
+      tdamp: RAIL_MATS[mat].tdamp,
     });
+  }
+
+  // Chomper jaws: a wall across the mouth, from the end of the rail before to the start of the
+  // rail after, facing into the table.
+  for (const p of pockets) {
+    if (!p.open || p.trait?.kind !== 'chomper') continue;
+    const prev = rails[(p.index + n - 1) % n]!;
+    const next = rails[p.index]!;
+    const dx = next.ax - prev.bx;
+    const dy = next.ay - prev.by;
+    const L = hyp(dx, dy) || 1;
+    let nx = -dy / L;
+    let ny = dx / L;
+    if (nx * p.inx + ny * p.iny < 0) {
+      nx = -nx;
+      ny = -ny;
+    }
+    p.plug = { ax: prev.bx, ay: prev.by, bx: next.ax, by: next.ay, nx, ny, edge: -1, t0: 0, t1: 1, ...felt() };
   }
 
   return { poly, rails, pockets, area: signedArea(poly) };
@@ -251,12 +326,18 @@ export function validateTable(t: Table, geom?: TableGeom): Validity {
   return { ok: true };
 }
 
+function felt(): { mat: RailMaterial; e: number; tdamp: number } {
+  return { mat: 'felt', e: RAIL_MATS.felt.e, tdamp: RAIL_MATS.felt.tdamp };
+}
+
 /** Inserts a bend vertex at the midpoint of edge `edge`. Returns the new vertex index. */
 export function insertVertex(t: Table, edge: number): number {
   const n = t.verts.length;
   const a = t.verts[edge]!;
   const b = t.verts[(edge + 1) % n]!;
   const v: TableVertex = { id: t.nextId++, x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, pocket: false };
+  // Both halves of a split edge keep its material.
+  if (a.mat) v.mat = a.mat;
   t.verts.splice(edge + 1, 0, v);
   return edge + 1;
 }
@@ -270,11 +351,12 @@ export function withoutVertex(t: Table, index: number): Table | null {
   return c;
 }
 
-/** Edge midpoint handles exist on edges long enough to split into two legal edges. */
+/** Edge midpoint handles exist on edges long enough to split into two legal edges (not steel). */
 export function canSplitEdge(t: Table, edge: number): boolean {
   if (t.verts.length >= MAX_VERTS) return false;
   const n = t.verts.length;
   const a = t.verts[edge]!;
+  if (a.mat === 'steel') return false;
   const b = t.verts[(edge + 1) % n]!;
   return hyp(b.x - a.x, b.y - a.y) >= 2 * MIN_EDGE + 1;
 }

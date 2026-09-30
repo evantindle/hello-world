@@ -87,6 +87,14 @@ export class StateHash {
   private h = 0x811c9dc5;
   private readonly view = new DataView(new ArrayBuffer(8));
 
+  str(s: string): this {
+    for (let i = 0; i < s.length; i++) {
+      this.h ^= s.charCodeAt(i);
+      this.h = Math.imul(this.h, 16777619);
+    }
+    return this;
+  }
+
   num(x: number): this {
     this.view.setFloat64(0, x);
     for (let i = 0; i < 8; i++) {
@@ -101,10 +109,14 @@ export class StateHash {
   }
 }
 
-/** Fingerprint of where everything is: the table and every ball. */
+/** Fingerprint of where everything is: the table (with its traits and toys) and every ball. */
 export function hashBoard(table: Table, balls: readonly Ball[]): number {
   const h = new StateHash();
-  for (const v of table.verts) h.num(v.id).num(v.x).num(v.y).num(v.pocket ? 1 : 0);
-  for (const b of balls) h.num(b.id).num(b.x).num(b.y).num(b.active ? 1 : 0);
+  for (const v of table.verts) {
+    h.num(v.id).num(v.x).num(v.y).num(v.pocket ? 1 : 0).num(v.bolted ? 1 : 0).str(v.mat ?? '');
+    if (v.trait) h.str(JSON.stringify(v.trait));
+  }
+  for (const part of table.parts) h.str(JSON.stringify(part));
+  for (const b of balls) h.num(b.id).num(b.x).num(b.y).num(b.active ? 1 : 0).num(b.hp).num(b.fuse);
   return h.value;
 }

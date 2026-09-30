@@ -32,9 +32,19 @@ export interface Handle {
   x: number;
   y: number;
   pocket: boolean;
+  /** A bolted knob: it shows (and complains when grabbed) but will not move. */
+  locked?: boolean;
 }
 
-export type BlockReason = InvalidReason | 'crushed' | 'keep-out' | 'squeezed-out' | 'budget' | 'pocket';
+export type BlockReason =
+  | InvalidReason
+  | 'crushed'
+  | 'keep-out'
+  | 'squeezed-out'
+  | 'budget'
+  | 'pocket'
+  | 'bolted'
+  | 'steel';
 
 export interface MoveResult {
   /** Distance the vertex actually travelled (and the budget it cost). */
@@ -52,7 +62,9 @@ interface Pos {
 export function listHandles(t: Table): Handle[] {
   const out: Handle[] = [];
   const n = t.verts.length;
-  t.verts.forEach((v, i) => out.push({ kind: 'vertex', index: i, x: v.x, y: v.y, pocket: v.pocket }));
+  t.verts.forEach((v, i) =>
+    out.push({ kind: 'vertex', index: i, x: v.x, y: v.y, pocket: v.pocket, locked: v.bolted === true }),
+  );
   for (let i = 0; i < n; i++) {
     if (!canSplitEdge(t, i)) continue;
     const a = t.verts[i]!;
@@ -221,6 +233,7 @@ export function moveVertex(host: ReshapeHost, vid: number, tx: number, ty: numbe
   const idx = vertexIndex(host.table, vid);
   if (idx < 0) return { applied: 0, blocked: null, pushed: [] };
   const v = host.table.verts[idx]!;
+  if (v.bolted) return { applied: 0, blocked: 'bolted', pushed: [] };
   tx = clamp(tx, PLAY.minX, PLAY.maxX);
   ty = clamp(ty, PLAY.minY, PLAY.maxY);
   let dx = tx - v.x;
@@ -252,9 +265,12 @@ export function removeBend(host: ReshapeHost, vid: number): MoveResult & { remov
   const v = t.verts[idx];
   if (!v) return fail('pocket');
   if (v.pocket) return fail('pocket');
+  if (v.bolted) return fail('bolted');
   const n = t.verts.length;
   const a = t.verts[(idx + n - 1) % n]!;
   const b = t.verts[(idx + 1) % n]!;
+  // Steel on either side of the bend: it is not going anywhere.
+  if (a.mat === 'steel' || v.mat === 'steel') return fail('steel');
   const q = closestOnSegment(v.x, v.y, a.x, a.y, b.x, b.y);
   const cost = hyp(v.x - q.x, v.y - q.y);
   if (cost > host.budget + 1e-6) return fail('budget');
@@ -322,7 +338,7 @@ export class DragSession {
       inserted = true;
     }
     const v = host.table.verts[idx];
-    if (!v) return null;
+    if (!v || v.bolted) return null;
     return new DragSession(v.id, v.x - px, v.y - py, inserted);
   }
 

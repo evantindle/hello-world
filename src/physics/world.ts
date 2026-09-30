@@ -3,7 +3,6 @@ import {
   CUE_BRAKE,
   CUE_TIRED_RAILS,
   E_BALL,
-  E_WALL,
   HIT_EVENT_MIN,
   K_DRAG,
   MAX_MOVE,
@@ -14,15 +13,15 @@ import {
   SIM_TIMEOUT,
   SOLVER_ITERS,
   SUCTION_A,
-  T_DAMP,
   V_MAX,
   V_STOP,
 } from '../config';
 import { hyp } from '../core/vec';
 import { centroid, nearestBoundary, pointInPolygon } from '../geom/polygon';
-import type { Pocket, Rail, TableGeom } from '../geom/table';
+import { chomperOpen, type Pocket, type Rail, type TableGeom } from '../geom/table';
 import { clearTally, type Ball } from './ball';
 import { logBallHit, logCushion, logPot, newLog, type TurnLog } from './log';
+import { accepts, spits, spitOut, sucks } from './pockets';
 import { clearSpinState, cushionSpin, hasSpin, releaseBank, spinFriction } from './spin';
 
 export { makeBall, type Ball, type BallVariant, type Suit } from './ball';
@@ -43,6 +42,10 @@ export type PhysEvent =
       speed: number;
     }
   | { type: 'pocketed'; ball: Ball; pocket: Pocket; vx: number; vy: number }
+  /** A picky or gentle pocket refused a ball and spat it back out. */
+  | { type: 'spat'; ball: Ball; pocket: Pocket }
+  /** A chomper's jaws snapped shut (on a ball, if `ball` is set). */
+  | { type: 'chomp'; pocket: Pocket; ball: Ball | null }
   | { type: 'rescued'; ball: Ball }
   /** Sidespin threw the cue ball along a cushion. */
   | { type: 'kick'; ball: Ball; x: number; y: number; dv: number }
@@ -67,6 +70,11 @@ export interface World {
   stillX: number[];
   stillY: number[];
   log: TurnLog;
+  /** Pockets with chomper jaws, and whether each was open at the last substep. */
+  chompers: Pocket[];
+  chompOpen: boolean[];
+  /** Per ball index: vid + 1 of the pocket that just spat it out (0 = none), until it gets clear. */
+  spitLock: number[];
 }
 
 /** Seconds per stillness check: if nothing moved more than STILL_DIST in one, the shot is over. */
@@ -89,7 +97,14 @@ export function createWorld(balls: Ball[], geom: TableGeom, seed = 0): World {
     stillX: balls.map((b) => b.x),
     stillY: balls.map((b) => b.y),
     log: newLog(),
+    chompers: geom.pockets.filter((p) => p.plug !== null),
+    chompOpen: geom.pockets.filter((p) => p.plug !== null).map((p) => chomperOpen(chomperOf(p), 0)),
+    spitLock: balls.map(() => 0),
   };
+}
+
+function chomperOf(p: Pocket): { period: number; open: number; phase: number } {
+  return p.trait?.kind === 'chomper' ? p.trait : { period: 1, open: 1, phase: 0 };
 }
 
 /** The world's own mulberry32 stream, in [0, 1). */
@@ -121,6 +136,7 @@ export function stepWorld(w: World, dt: number, out: PhysEvent[]): void {
   const nb = balls.length;
   if (w.pulled.length !== nb) w.pulled = balls.map(() => false);
   if (w.driven.length !== nb) w.driven = balls.map(() => false);
+  if (w.spitLock.length !== nb) w.spitLock = balls.map(() => 0);
 
   let vmax = 0;
   for (let i = 0; i < nb; i++) {
@@ -147,12 +163,15 @@ export function stepWorld(w: World, dt: number, out: PhysEvent[]): void {
 
   while (done < n) {
     const mark = out.length;
+    // Sim time at the end of this substep.
+    const t = w.t + (dt - left) + h;
     for (let i = 0; i < nb; i++) {
       const b = balls[i]!;
       if (!b.active) continue;
       b.x += b.vx * h;
       b.y += b.vy * h;
     }
+    if (w.chompers.length) chomp(w, t, out);
     for (let it = 0; it < SOLVER_ITERS; it++) {
       for (let i = 0; i < nb; i++) {
         const a = balls[i]!;
@@ -166,10 +185,11 @@ export function stepWorld(w: World, dt: number, out: PhysEvent[]): void {
         const b = balls[i]!;
         if (!b.active) continue;
         for (let k = 0; k < rails.length; k++) collideRail(b, rails[k]!, out);
+        for (let k = 0; k < w.chompers.length; k++) if (!w.chompOpen[k]) collideRail(b, w.chompers[k]!.plug!, out);
       }
     }
-    guard(w, out);
-    suctionAndCapture(w, h, out);
+    guard(w, t, out);
+    suctionAndCapture(w, h, t, out);
     friction(w, h);
     for (let k = mark; k < out.length; k++) note(w, out[k]!);
     done++;
@@ -336,11 +356,11 @@ export function collideRail(b: Ball, r: Rail, out: PhysEvent[]): void {
   b.y = qy + ny * R;
   const vn = b.vx * nx + b.vy * ny;
   if (vn >= 0) return;
-  const e = -vn < REST_SPEED ? 0 : E_WALL;
+  const e = -vn < REST_SPEED ? 0 : r.e;
   const tx = b.vx - nx * vn;
   const ty = b.vy - ny * vn;
-  b.vx = tx * T_DAMP - nx * vn * e;
-  b.vy = ty * T_DAMP - ny * vn * e;
+  b.vx = tx * r.tdamp - nx * vn * e;
+  b.vy = ty * r.tdamp - ny * vn * e;
   const kick = b.kind === 'cue' && hasSpin(b) ? cushionSpin(b, nx, ny, vn, e) : 0;
   if (-vn > HIT_EVENT_MIN) {
     if (b.kind === 'cue') {
@@ -372,8 +392,42 @@ function capture(b: Ball, p: Pocket, out: PhysEvent[]): void {
   out.push({ type: 'pocketed', ball: b, pocket: p, vx, vy });
 }
 
+/**
+ * Chomper jaws: when they snap shut, a ball caught in the mouth is swallowed if it is over the
+ * hole, otherwise shoved back out onto the felt.
+ */
+function chomp(w: World, t: number, out: PhysEvent[]): void {
+  for (let k = 0; k < w.chompers.length; k++) {
+    const p = w.chompers[k]!;
+    const open = chomperOpen(chomperOf(p), t);
+    const was = w.chompOpen[k]!;
+    w.chompOpen[k] = open;
+    if (open || !was) continue;
+    const pl = p.plug!;
+    let ate: Ball | null = null;
+    for (const b of w.balls) {
+      if (!b.active) continue;
+      // How far the centre sits in front of the jaw line (negative: in the mouth).
+      const front = (b.x - pl.ax) * pl.nx + (b.y - pl.ay) * pl.ny;
+      if (front >= R) continue;
+      const ex = pl.bx - pl.ax;
+      const ey = pl.by - pl.ay;
+      const along = ((b.x - pl.ax) * ex + (b.y - pl.ay) * ey) / (ex * ex + ey * ey);
+      if (along < 0 || along > 1) continue;
+      if (hyp(b.x - p.x, b.y - p.y) < p.r) {
+        capture(b, p, out);
+        ate = b;
+      } else {
+        b.x += pl.nx * (R - front);
+        b.y += pl.ny * (R - front);
+      }
+    }
+    out.push({ type: 'chomp', pocket: p, ball: ate });
+  }
+}
+
 /** Belt and braces: a centre that somehow left the polygon is pocketed or put back. */
-function guard(w: World, out: PhysEvent[]): void {
+function guard(w: World, t: number, out: PhysEvent[]): void {
   const poly = w.geom.poly;
   for (const b of w.balls) {
     if (!b.active || pointInPolygon(b.x, b.y, poly)) continue;
@@ -387,7 +441,7 @@ function guard(w: World, out: PhysEvent[]): void {
         best = p;
       }
     }
-    if (best && bd < best.r + R) {
+    if (best && bd < best.r + R && accepts(best, b, t)) {
       capture(b, best, out);
       continue;
     }
@@ -418,26 +472,38 @@ export function rescue(b: Ball, geom: TableGeom): void {
   }
 }
 
-function suctionAndCapture(w: World, h: number, out: PhysEvent[]): void {
+function suctionAndCapture(w: World, h: number, t: number, out: PhysEvent[]): void {
   const pockets = w.geom.pockets;
   const balls = w.balls;
   for (let i = 0; i < balls.length; i++) {
     const b = balls[i]!;
     w.pulled[i] = false;
     if (!b.active) continue;
+    const lock = w.spitLock[i]!;
     for (const p of pockets) {
       if (!p.open) continue;
       const dx = p.x - b.x;
       const dy = p.y - b.y;
       const d2 = dx * dx + dy * dy;
       const cr = b.kind === 'cue' ? p.rc : p.r;
+      if (lock === p.vid + 1 && d2 > 2.25 * cr * cr) w.spitLock[i] = 0;
       if (d2 < cr * cr) {
-        capture(b, p, out);
-        break;
+        if (accepts(p, b, t)) {
+          capture(b, p, out);
+          break;
+        }
+        if (spits(p)) {
+          spitOut(b, p, cr);
+          if (w.spitLock[i] !== p.vid + 1) {
+            w.spitLock[i] = p.vid + 1;
+            out.push({ type: 'spat', ball: b, pocket: p });
+          }
+        }
+        continue;
       }
-      // Pockets are picky eaters: they only slurp object balls. The cue ball (who has eyes,
-      // and stares back) has to fall in on its own.
-      if (b.kind === 'object' && d2 < p.sr * p.sr) {
+      // Holes only slurp object balls they would take. The cue ball (who has eyes, and stares
+      // back) has to fall in on its own.
+      if (d2 < p.sr * p.sr && sucks(p, b, t)) {
         const d = Math.sqrt(d2);
         const q = d / p.sr;
         const a = SUCTION_A * (1 - q * q * q * q);

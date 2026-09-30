@@ -25,6 +25,8 @@ export class Fx {
   readonly chomp = new Map<number, number>();
   /** Per pocket vertex id: animated hole radius. */
   readonly holeR = new Map<number, number>();
+  /** Per vertex id: seconds since a scratch bolted it (drives the wrench animation). */
+  readonly bolted = new Map<number, number>();
   readonly pegFlick: number[] = new Array<number>(PEGS).fill(0);
   lastPeg = 0;
   /** Strike speed lines. */
@@ -57,6 +59,7 @@ export class Fx {
     this.nope.clear();
     this.chomp.clear();
     this.holeR.clear();
+    this.bolted.clear();
     this.speedLines = null;
     this.confettiRain = 0;
     this.fireworks = 0;
@@ -82,6 +85,10 @@ export class Fx {
     for (const [k, v] of this.nope) {
       if (v - dtReal <= 0) this.nope.delete(k);
       else this.nope.set(k, v - dtReal);
+    }
+    for (const [k, v] of this.bolted) {
+      if (v > 2) this.bolted.delete(k);
+      else this.bolted.set(k, v + dtReal);
     }
     for (const [k, v] of this.chomp) {
       if (v - dt <= 0) this.chomp.delete(k);

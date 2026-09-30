@@ -15,6 +15,7 @@ function bigBox(): Table {
       { id: 2, x: 4000, y: 3500, pocket: false },
       { id: 3, x: -3000, y: 3500, pocket: false },
     ],
+    parts: [],
     nextId: 4,
   };
 }

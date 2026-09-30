@@ -35,6 +35,8 @@ const BLOCKED: Record<string, string> = {
   pinch: 'TOO TIGHT!',
   'short-edge': 'NOPE!',
   sharp: 'TOO POINTY!',
+  bolted: 'BOLTED!',
+  steel: 'STEEL!',
 };
 
 /**
@@ -231,7 +233,8 @@ export class Director {
         case 'wallHit': {
           const s = e.speed;
           sfx.boing(s / 1500);
-          fx.jelly.wallHit(game.table, e.edge, e.u, s, e.nx, e.ny);
+          // Edge -1 is a chomper's jaws, not a rail.
+          if (e.edge >= 0) fx.jelly.wallHit(game.table, e.edge, e.u, s, e.nx, e.ny);
           fx.balls.squash(e.ball.id, e.nx, e.ny, Math.min(0.42, s / 2200));
           if (s > 250) fx.particles.dust(e.x, e.y, 2 + Math.round(s / 500), s * 0.15, r);
           if (s > 1300)
@@ -273,6 +276,33 @@ export class Director {
             pop(text, lx, ly, { size: b.num === 8 ? 28 : 40, color: '#b8ff8a', force: true });
             this.hud.popPip(b.num);
             this.cam.addShake(0.15);
+          }
+          break;
+        }
+        case 'spat': {
+          const p = e.pocket;
+          const gentle = p.trait?.kind === 'gentle';
+          sfx.bleh();
+          fx.chomp.set(p.vid, 0.35);
+          fx.balls.squash(e.ball.id, p.inx, p.iny, 0.35);
+          fx.particles.dust(e.ball.x, e.ball.y, 5, 160, r, gentle ? '#ffe7f3' : '#ffd23f');
+          pop(gentle ? 'TOO FAST!' : 'BLEH!', p.x + p.inx * 70, p.y + p.iny * 70, {
+            size: 30,
+            color: gentle ? '#ffb3d9' : '#ffd23f',
+            force: true,
+          });
+          if (e.ball.kind === 'cue') fx.balls.setMood(0, 'shock', 0.8);
+          break;
+        }
+        case 'chomp': {
+          const p = e.pocket;
+          fx.chomp.set(p.vid, 0.35);
+          if (e.ball) {
+            sfx.chomp();
+            pop('CHOMP!', p.x + p.inx * 70, p.y + p.iny * 70, { size: 36, color: '#ff8fa3', force: true });
+            this.cam.addShake(0.15);
+          } else if (r() < 0.5) {
+            sfx.chomp();
           }
           break;
         }
@@ -324,6 +354,25 @@ export class Director {
       } else if (level === 0 && prev > 0) {
         this.after(0.4, () => hud.toast('pockets: satisfied', 'good'));
       }
+    });
+
+    ev.on('pocketBolted', ({ vid, x, y }) => {
+      this.after(0.7, () => {
+        sfx.clank();
+        fx.bolted.set(vid, 0);
+        pop('BOLTED!', x, y - 60, { size: 36, color: '#c8d3e6', force: true });
+        fx.particles.sparks(x, y, 0, -1, 10, 380, r, '#ffe45c');
+        this.cam.addShake(0.2);
+      });
+    });
+
+    ev.on('uncorked', ({ vid, x, y }) => {
+      this.after(0.3, () => {
+        sfx.cork();
+        fx.chomp.set(vid, 0.35);
+        pop('POP!', x, y - 50, { size: 34, color: '#ddb57a', force: true });
+        fx.particles.confetti(x, y, 12, 240, r);
+      });
     });
 
     ev.on('respawnStart', ({ fromX, fromY }) => {

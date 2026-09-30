@@ -80,6 +80,10 @@ export interface GameEvents {
   respawnStart: { fromX: number; fromY: number; toX: number; toY: number };
   respawnLand: { x: number; y: number };
   hunger: { level: number; prev: number };
+  /** A scratch bolted this pocket down. */
+  pocketBolted: { vid: number; x: number; y: number };
+  /** A corked pocket popped open again. */
+  uncorked: { vid: number; x: number; y: number };
   slowmo: { on: boolean };
   gameOver: GameOverInfo;
 }
@@ -505,12 +509,29 @@ export class Game implements ReshapeHost {
       this.streak = 0;
     }
     if (this.scratched) this.penalties++;
+    let rebuild = false;
+    // The pocket that swallowed the cue ball gets bolted down for the rest of the game.
+    if (this.scratched && this.scratchPocket && this.rules.boltOnScratch) {
+      const v = this.table.verts.find((q) => q.id === this.scratchPocket!.vid);
+      if (v && !v.bolted) {
+        v.bolted = true;
+        this.events.emit('pocketBolted', { vid: v.id, x: v.x, y: v.y });
+      }
+    }
+    // Corks count down one stroke at a time, then pop.
+    for (const v of this.table.verts) {
+      if (v.trait?.kind !== 'corked') continue;
+      v.trait.strokes--;
+      if (v.trait.strokes <= 0) {
+        delete v.trait;
+        rebuild = true;
+        this.events.emit('uncorked', { vid: v.id, x: v.x, y: v.y });
+      }
+    }
     const prevHunger = this.hunger;
     if (this.rules.hunger) this.hunger = potted.length > 0 ? 0 : Math.min(MAX_HUNGER, this.hunger + 1);
-    if (this.hunger !== prevHunger) {
-      this.geom = buildGeom(this.table, this.hunger);
-      this.events.emit('hunger', { level: this.hunger, prev: prevHunger });
-    }
+    if (this.hunger !== prevHunger || rebuild) this.geom = buildGeom(this.table, this.hunger);
+    if (this.hunger !== prevHunger) this.events.emit('hunger', { level: this.hunger, prev: prevHunger });
     this.events.emit('turnResult', {
       potted,
       scratch: this.scratched,
@@ -629,6 +650,11 @@ export class Game implements ReshapeHost {
 
   beginDrag(h: Handle, px: number, py: number): boolean {
     if (!this.canReshape || this.drag) return false;
+    if (h.kind === 'vertex' && h.locked) {
+      const v = this.table.verts[h.index];
+      if (v) this.events.emit('blocked', { vid: v.id, reason: 'bolted', x: v.x, y: v.y });
+      return false;
+    }
     const s = DragSession.begin(this, h, px, py);
     if (!s) return false;
     this.drag = s;

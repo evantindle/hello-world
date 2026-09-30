@@ -378,4 +378,28 @@ export class Sfx {
     this.stopLoop(this.squeak);
     this.squeak = null;
   }
+
+  // ------------------------------------------------------------------ v2: arena sounds
+
+  /** A big cartoon wrench bolting something down. */
+  clank(): void {
+    if (!this.allow(6)) return;
+    this.tone('square', 740, 0.09, 0.07, { lp: 3200 });
+    this.tone('square', 1110, 0.07, 0.05, { lp: 4000, delay: 0.005 });
+    this.hiss(0.06, 0.25, 'bandpass', 3200, 4);
+    this.tone('square', 690, 0.1, 0.06, { lp: 3000, delay: 0.16 });
+    this.hiss(0.05, 0.2, 'bandpass', 2900, 4, 0.16);
+  }
+
+  /** A picky pocket spitting out a ball it does not fancy. */
+  bleh(): void {
+    if (!this.allow(6)) return;
+    this.tone('sawtooth', 150, 0.28, 0.07, { f1: 90, vibrato: [32, 22], lp: 900 });
+  }
+
+  /** A cork popping out of a pocket. */
+  cork(): void {
+    this.tone('sine', 1100, 0.09, 0.2, { f1: 320 });
+    this.hiss(0.05, 0.18, 'highpass', 2500);
+  }
 }
