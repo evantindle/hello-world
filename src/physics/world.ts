@@ -22,6 +22,18 @@ import { chomperOpen, type Pocket, type Rail, type TableGeom } from '../geom/tab
 import { clearTally, type Ball } from './ball';
 import { logBallHit, logCushion, logPot, newLog, type TurnLog } from './log';
 import { accepts, spits, spitOut, sucks } from './pockets';
+import {
+  burnFuse,
+  collideBumper,
+  collideWall,
+  crackEgg,
+  flee,
+  ghostPass,
+  solidState,
+  updateGateSides,
+  type SolidEvent,
+  type SolidState,
+} from './solids';
 import { clearSpinState, cushionSpin, hasSpin, releaseBank, spinFriction } from './spin';
 
 export { makeBall, type Ball, type BallVariant, type Suit } from './ball';
@@ -49,6 +61,7 @@ export type PhysEvent =
   | { type: 'rescued'; ball: Ball }
   /** Sidespin threw the cue ball along a cushion. */
   | { type: 'kick'; ball: Ball; x: number; y: number; dv: number }
+  | SolidEvent
   | { type: 'stopped'; timedOut: boolean };
 
 export interface World {
@@ -75,6 +88,8 @@ export interface World {
   chompOpen: boolean[];
   /** Per ball index: vid + 1 of the pocket that just spat it out (0 = none), until it gets clear. */
   spitLock: number[];
+  /** Glass hit points, gate memory and bumper kicks for this shot. */
+  solid: SolidState;
 }
 
 /** Seconds per stillness check: if nothing moved more than STILL_DIST in one, the shot is over. */
@@ -100,6 +115,7 @@ export function createWorld(balls: Ball[], geom: TableGeom, seed = 0): World {
     chompers: geom.pockets.filter((p) => p.plug !== null),
     chompOpen: geom.pockets.filter((p) => p.plug !== null).map((p) => chomperOpen(chomperOf(p), 0)),
     spitLock: balls.map(() => 0),
+    solid: solidState(geom.walls, geom.bumpers, balls),
   };
 }
 
@@ -172,13 +188,15 @@ export function stepWorld(w: World, dt: number, out: PhysEvent[]): void {
       b.y += b.vy * h;
     }
     if (w.chompers.length) chomp(w, t, out);
+    const walls = w.geom.walls;
+    const bumpers = w.geom.bumpers;
     for (let it = 0; it < SOLVER_ITERS; it++) {
       for (let i = 0; i < nb; i++) {
         const a = balls[i]!;
         if (!a.active) continue;
         for (let j = i + 1; j < nb; j++) {
           const b = balls[j]!;
-          if (b.active) collideBalls(a, b, out);
+          if (b.active && !ghostPass(a, b)) collideBalls(a, b, out);
         }
       }
       for (let i = 0; i < nb; i++) {
@@ -186,10 +204,15 @@ export function stepWorld(w: World, dt: number, out: PhysEvent[]): void {
         if (!b.active) continue;
         for (let k = 0; k < rails.length; k++) collideRail(b, rails[k]!, out);
         for (let k = 0; k < w.chompers.length; k++) if (!w.chompOpen[k]) collideRail(b, w.chompers[k]!.plug!, out);
+        for (let k = 0; k < walls.length; k++) collideWall(w.solid, b, i, walls[k]!, k, out);
+        for (let k = 0; k < bumpers.length; k++) collideBumper(w.solid, b, bumpers[k]!, k, out);
       }
     }
+    effects(w, out, mark);
+    updateGateSides(w.solid, walls, balls);
     guard(w, t, out);
     suctionAndCapture(w, h, t, out);
+    fields(w, h);
     friction(w, h);
     for (let k = mark; k < out.length; k++) note(w, out[k]!);
     done++;
@@ -261,9 +284,63 @@ function finish(w: World, out: PhysEvent[], timedOut: boolean): void {
 
 /** Turn-log bookkeeping for an event the world just produced. */
 function note(w: World, e: PhysEvent): void {
-  if (e.type === 'ballHit') logBallHit(w.log, e.a, e.b);
-  else if (e.type === 'wallHit') logCushion(w.log, e.ball);
-  else if (e.type === 'pocketed') logPot(w.log, e.ball, e.pocket.vid, w.t);
+  switch (e.type) {
+    case 'ballHit':
+      logBallHit(w.log, e.a, e.b);
+      break;
+    case 'wallHit':
+      logCushion(w.log, e.ball);
+      break;
+    case 'partHit':
+      logCushion(w.log, e.ball);
+      break;
+    case 'pocketed':
+      logPot(w.log, e.ball, e.pocket.vid, w.t);
+      break;
+    case 'glass':
+      w.log.glassHp[e.src] = e.hp;
+      break;
+    case 'egg':
+      if (!w.log.cracked.includes(e.ball.num)) w.log.cracked.push(e.ball.num);
+      if (e.hp <= 0) w.log.broken.push(e.ball.num);
+      break;
+    case 'bomb':
+      w.log.exploded.push(e.ball.num);
+      break;
+    default:
+      break;
+  }
+}
+
+/**
+ * Knock-on effects of this substep's contacts, applied after the solver so the collision loops
+ * stay stable: eggs crack on hard knocks, bombs burn their fuse on every real one.
+ */
+function effects(w: World, out: PhysEvent[], mark: number): void {
+  const end = out.length;
+  for (let k = mark; k < end; k++) {
+    const e = out[k]!;
+    let hit: Ball[];
+    if (e.type === 'ballHit') hit = [e.a, e.b];
+    else if (e.type === 'wallHit' || e.type === 'partHit' || e.type === 'bumperHit') hit = [e.ball];
+    else continue;
+    const speed = e.speed;
+    for (const b of hit) {
+      if (b.variant === 'egg') crackEgg(b, speed, out);
+      else if (b.variant === 'bomb') burnFuse(b, w.balls, w.solid, w.geom.walls, out);
+    }
+  }
+}
+
+/** Forces that act on balls: for now, the chicken fleeing a moving cue ball. */
+function fields(w: World, h: number): void {
+  const balls = w.balls;
+  let cue: Ball | undefined;
+  for (const b of balls) if (b.kind === 'cue') cue = b;
+  for (let i = 0; i < balls.length; i++) {
+    const b = balls[i]!;
+    w.driven[i] = b.variant === 'chicken' ? flee(b, cue, h) : false;
+  }
 }
 
 export function collideBalls(a: Ball, b: Ball, out: PhysEvent[]): void {
@@ -520,6 +597,8 @@ function friction(w: World, h: number): void {
   for (let i = 0; i < balls.length; i++) {
     const b = balls[i]!;
     if (!b.active) continue;
+    // A fleeing chicken is running on its own legs.
+    if (w.driven[i] && b.variant === 'chicken') continue;
     if (b.kind === 'cue' && (b.eng > 0 || hasSpin(b))) {
       const skidding = spinFriction(b, h, 1);
       if (!skidding && hyp(b.vx, b.vy) < V_STOP && !w.pulled[i] && !w.driven[i]) {

@@ -1,6 +1,7 @@
 import { CUE_START, PAR, R, RACK_APEX } from '../config';
 import type { Rng } from '../core/rng';
 import { hyp } from '../core/vec';
+import { THICK } from '../geom/parts';
 import { centroid, distToSegment, pointInPolygon } from '../geom/polygon';
 import type { TableGeom } from '../geom/table';
 import { makeBall, type Ball } from '../physics/world';
@@ -61,6 +62,8 @@ export function clearance(
 ): number {
   let score = Infinity;
   for (const r of geom.rails) score = Math.min(score, distToSegment(x, y, r.ax, r.ay, r.bx, r.by) - R);
+  for (const w of geom.walls) score = Math.min(score, distToSegment(x, y, w.ax, w.ay, w.bx, w.by) - R - THICK);
+  for (const bp of geom.bumpers) score = Math.min(score, hyp(bp.x - x, bp.y - y) - bp.r - R);
   for (const b of balls) {
     if (!b.active || b.id === selfId) continue;
     score = Math.min(score, hyp(b.x - x, b.y - y) - 2 * R);

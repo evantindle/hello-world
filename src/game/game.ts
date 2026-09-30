@@ -509,7 +509,19 @@ export class Game implements ReshapeHost {
       this.streak = 0;
     }
     if (this.scratched) this.penalties++;
+    const log = this.world.log;
+    // A broken egg costs a stroke in Free Play (Classic levels judge eggs through their goals).
+    if (this.rules.mode === 'free') this.penalties += log.broken.length;
     let rebuild = false;
+    // Glass remembers its cracks; a shattered pane is gone for good.
+    for (const [src, hp] of Object.entries(log.glassHp)) {
+      const i = this.table.parts.findIndex((q) => q.id === Number(src));
+      const part = this.table.parts[i];
+      if (!part || part.kind !== 'glass') continue;
+      if (hp <= 0) this.table.parts.splice(i, 1);
+      else part.hp = hp;
+      rebuild = true;
+    }
     // The pocket that swallowed the cue ball gets bolted down for the rest of the game.
     if (this.scratched && this.scratchPocket && this.rules.boltOnScratch) {
       const v = this.table.verts.find((q) => q.id === this.scratchPocket!.vid);

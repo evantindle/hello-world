@@ -31,6 +31,7 @@ export function cloneLog(log: TurnLog): TurnLog {
     cracked: [...log.cracked],
     broken: [...log.broken],
     exploded: [...log.exploded],
+    glassHp: { ...log.glassHp },
     cueRest: log.cueRest ? { ...log.cueRest } : null,
   };
 }

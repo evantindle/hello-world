@@ -139,8 +139,10 @@ export function drawBall(
     ctx.rotate(-a);
   }
   if (scale !== 1) ctx.scale(scale, scale);
+  // Ghosts are see-through.
+  if (b.variant === 'ghost') ctx.globalAlpha *= 0.55;
 
-  const base = b.kind === 'cue' ? COLORS.cue : b.color;
+  const base = b.kind === 'cue' ? COLORS.cue : (VARIANT_COLOR[b.variant] ?? b.color);
   ctx.beginPath();
   ctx.arc(0, 0, R, 0, TAU);
   ctx.fillStyle = shade(base, -0.28);
@@ -154,6 +156,19 @@ export function drawBall(
   ctx.fill();
   ctx.rotate(-up);
   if (b.kind === 'object') drawDecals(ctx, b, f, up);
+  if (b.variant === 'bowling') {
+    // Finger holes ride round with the ball.
+    decal(ctx, f.qx, f.qy, f.qh, R * 0.15, '#0e0f1c', null, up);
+    decal(ctx, -f.qx * 0.8 + f.px * 0.6, -f.qy * 0.8 + f.py * 0.6, -f.qh * 0.8 + f.ph * 0.6, R * 0.13, '#0e0f1c', null, up);
+    decal(ctx, f.qx * 0.3 - f.px * 0.95, f.qy * 0.3 - f.py * 0.95, f.qh * 0.3 - f.ph * 0.95, R * 0.13, '#0e0f1c', null, up);
+  } else if (b.variant === 'egg') {
+    ctx.fillStyle = 'rgba(160,120,80,0.45)';
+    for (const [sx, sy] of EGG_SPECKS) {
+      ctx.beginPath();
+      ctx.arc(sx * R, sy * R, 1.8, 0, TAU);
+      ctx.fill();
+    }
+  }
   ctx.restore();
 
   ctx.save();
@@ -174,6 +189,140 @@ export function drawBall(
   ctx.stroke();
 
   if (b.kind === 'cue') drawFace(ctx, f, fx, game, up);
+  else if (b.variant !== 'normal') drawVariant(ctx, b, fx, up);
+  ctx.restore();
+}
+
+const VARIANT_COLOR: Partial<Record<Ball['variant'], string>> = {
+  bowling: '#2e3150',
+  egg: '#fff3dc',
+  bomb: '#26283d',
+  chicken: '#fffdf5',
+  golden: '#ffcc33',
+};
+
+const EGG_SPECKS: [number, number][] = [
+  [-0.4, -0.2],
+  [0.3, -0.5],
+  [0.5, 0.2],
+  [-0.2, 0.45],
+  [0.05, 0.05],
+  [-0.55, 0.3],
+];
+
+/** Upright decorations for the oddball balls (they keep facing the viewer as the ball rolls). */
+function drawVariant(ctx: CanvasRenderingContext2D, b: Ball, fx: Fx, up: number) {
+  const t = fx.time;
+  ctx.save();
+  ctx.rotate(up);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  switch (b.variant) {
+    case 'egg': {
+      if (b.hp < 2) {
+        // A crack across the shell.
+        ctx.beginPath();
+        ctx.moveTo(-R * 0.8, -R * 0.1);
+        ctx.lineTo(-R * 0.4, R * 0.1);
+        ctx.lineTo(-R * 0.1, -R * 0.15);
+        ctx.lineTo(R * 0.25, R * 0.12);
+        ctx.lineTo(R * 0.55, -R * 0.08);
+        ctx.lineTo(R * 0.85, R * 0.05);
+        ctx.lineWidth = 2.2;
+        ctx.strokeStyle = COLORS.ink;
+        ctx.stroke();
+      }
+      break;
+    }
+    case 'bomb': {
+      // A fuse that shortens with every knock, fizzing at the tip.
+      const len = 6 + b.fuse * 6;
+      ctx.beginPath();
+      ctx.moveTo(0, -R + 2);
+      ctx.quadraticCurveTo(len * 0.4, -R - len * 0.6, len * 0.7, -R - len);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = '#8a6a3a';
+      ctx.stroke();
+      const sx = len * 0.7;
+      const sy = -R - len;
+      const fl = 4 + Math.sin(t * 40) * 2 + (3 - b.fuse) * 2;
+      star(ctx, sx, sy, fl, b.fuse <= 1 ? '#ff4d6d' : '#ffe45c');
+      ctx.beginPath();
+      ctx.roundRect(-5, -R - 3, 10, 6, 2);
+      ctx.fillStyle = '#7d8aa3';
+      ctx.fill();
+      ctx.lineWidth = 1.6;
+      ctx.strokeStyle = COLORS.ink;
+      ctx.stroke();
+      break;
+    }
+    case 'chicken': {
+      const sp = Math.hypot(b.vx, b.vy);
+      // Comb.
+      ctx.fillStyle = '#ff3b3b';
+      ctx.strokeStyle = COLORS.ink;
+      ctx.lineWidth = 1.6;
+      for (const cx of [-5, 0, 5]) {
+        ctx.beginPath();
+        ctx.arc(cx, -R - 1 - (cx === 0 ? 3 : 0), 4, 0, TAU);
+        ctx.fill();
+        ctx.stroke();
+      }
+      // Eyes and beak.
+      for (const ex of [-6, 6]) {
+        ctx.beginPath();
+        ctx.arc(ex, -5, 2.6, 0, TAU);
+        ctx.fillStyle = COLORS.ink;
+        ctx.fill();
+      }
+      ctx.beginPath();
+      ctx.moveTo(-5, 1);
+      ctx.lineTo(0, 9);
+      ctx.lineTo(5, 1);
+      ctx.closePath();
+      ctx.fillStyle = '#ffb300';
+      ctx.fill();
+      ctx.stroke();
+      // Little legs that run when it runs.
+      const run = sp > 30 ? Math.sin(t * 30) * 5 : 0;
+      ctx.beginPath();
+      ctx.moveTo(-6, R - 2);
+      ctx.lineTo(-6 + run, R + 7);
+      ctx.moveTo(6, R - 2);
+      ctx.lineTo(6 - run, R + 7);
+      ctx.lineWidth = 2.6;
+      ctx.strokeStyle = '#ff9a1f';
+      ctx.stroke();
+      break;
+    }
+    case 'ghost': {
+      // Wavy tail and hollow eyes.
+      ctx.beginPath();
+      for (let i = 0; i <= 8; i++) {
+        const x = -R + (i / 8) * 2 * R;
+        const y = R * 0.85 + Math.sin(t * 8 + i) * 3;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+      ctx.stroke();
+      for (const ex of [-7, 7]) {
+        ctx.beginPath();
+        ctx.ellipse(ex, -4, 3, 5, 0, 0, TAU);
+        ctx.fillStyle = COLORS.ink;
+        ctx.fill();
+      }
+      break;
+    }
+    case 'golden': {
+      const a = t * 2;
+      star(ctx, Math.cos(a) * R * 0.6, Math.sin(a) * R * 0.6, 5, '#fffbe0');
+      break;
+    }
+    default:
+      break;
+  }
   ctx.restore();
 }
 

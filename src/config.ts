@@ -109,6 +109,24 @@ export const WZ_RAIL_KEEP = 0.5;
 /** Sidespin decay per second. */
 export const WZ_DECAY = 0.6;
 
+// ---------------------------------------------------------------- toys & oddball balls
+/** Bumpers send balls away this much faster than they arrived (and at least BUMPER_MIN)... */
+export const BUMPER_E = 1.25;
+export const BUMPER_MIN = 320;
+/** ...for their first few kicks each shot, so two bumpers cannot juggle a ball forever. */
+export const BUMPER_KICKS = 8;
+/** A hit harder than this (closing speed) cracks a glass pane or an egg. */
+export const GLASS_HIT = 450;
+export const EGG_CRACK = 700;
+/** Bomb blast: radius and push at the centre. */
+export const BLAST_R = 180;
+export const BLAST_V = 900;
+/** The chicken runs (on its legs: no rolling friction) from a moving cue ball within this range,
+ * this keenly, this fast at most. */
+export const CHICKEN_R = 200;
+export const CHICKEN_A = 3000;
+export const CHICKEN_VMAX = 900;
+
 // ---------------------------------------------------------------- shot
 export const V_SHOT_MIN = 350;
 export const V_SHOT_MAX = 2300;

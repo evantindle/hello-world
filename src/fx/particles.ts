@@ -1,6 +1,17 @@
 import { COLORS } from '../config';
 
-export type ParticleKind = 'dust' | 'confetti' | 'spark' | 'star' | 'sweat' | 'ring' | 'ember' | 'drool';
+export type ParticleKind =
+  | 'dust'
+  | 'confetti'
+  | 'spark'
+  | 'star'
+  | 'sweat'
+  | 'ring'
+  | 'ember'
+  | 'drool'
+  | 'shard'
+  | 'yolk'
+  | 'feather';
 
 export interface Particle {
   kind: ParticleKind;
@@ -200,6 +211,69 @@ export class Particles {
       g: 120,
       color: '#bfe9ff',
     });
+  }
+
+  /** Glass shards: glinting triangles that tumble and fall. */
+  shards(x: number, y: number, n: number, speed: number, rand: () => number): void {
+    for (let i = 0; i < n; i++) {
+      const a = rand() * Math.PI * 2;
+      const s = speed * (0.3 + rand() * 0.8);
+      this.spawn({
+        kind: 'shard',
+        x,
+        y,
+        vx: Math.cos(a) * s,
+        vy: Math.sin(a) * s,
+        size: 5 + rand() * 7,
+        rot: rand() * 6,
+        vr: (rand() - 0.5) * 20,
+        life: 0.8 + rand() * 0.5,
+        drag: 2.5,
+        g: 400,
+        color: rand() < 0.5 ? '#a0ecff' : '#e6fbff',
+      });
+    }
+  }
+
+  /** A broken egg: yolk and white splatter. */
+  yolk(x: number, y: number, rand: () => number): void {
+    for (let i = 0; i < 14; i++) {
+      const a = rand() * Math.PI * 2;
+      const s = 80 + rand() * 260;
+      this.spawn({
+        kind: 'yolk',
+        x,
+        y,
+        vx: Math.cos(a) * s,
+        vy: Math.sin(a) * s,
+        size: 5 + rand() * 9,
+        life: 1.4 + rand() * 0.8,
+        drag: 6,
+        color: i < 5 ? '#ffc300' : '#fffdf5',
+      });
+    }
+  }
+
+  /** A burst of chicken feathers drifting down. */
+  feathers(x: number, y: number, rand: () => number): void {
+    for (let i = 0; i < 8; i++) {
+      const a = rand() * Math.PI * 2;
+      const s = 60 + rand() * 140;
+      this.spawn({
+        kind: 'feather',
+        x,
+        y,
+        vx: Math.cos(a) * s,
+        vy: Math.sin(a) * s,
+        size: 7 + rand() * 5,
+        rot: rand() * 6,
+        vr: (rand() - 0.5) * 6,
+        life: 1.4 + rand() * 0.6,
+        drag: 3,
+        g: 60,
+        color: '#fffdf5',
+      });
+    }
   }
 
   /** A firework shell bursting at (x, y). */

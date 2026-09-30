@@ -1,6 +1,7 @@
 import { A_SLIDE, R, SPIN_RANGE } from '../config';
 import { hyp } from '../core/vec';
 import type { Ball } from '../physics/world';
+import { THICK, type Bumper, type Wall } from './parts';
 import { closestOnSegment } from './polygon';
 import type { Pocket, Rail, TableGeom } from './table';
 
@@ -61,6 +62,31 @@ export function sweepRail(ox: number, oy: number, dx: number, dy: number, r: Rai
   return t;
 }
 
+/** A ball swept along the ray vs a two-sided segment of half-thickness rad - R (a capsule). */
+export function sweepCapsule(
+  ox: number,
+  oy: number,
+  dx: number,
+  dy: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  rad: number,
+): number {
+  const ex = bx - ax;
+  const ey = by - ay;
+  const l = hyp(ex, ey) || 1;
+  const nx = (-ey / l) * rad;
+  const ny = (ex / l) * rad;
+  return Math.min(
+    raySegment(ox, oy, dx, dy, ax + nx, ay + ny, bx + nx, by + ny),
+    raySegment(ox, oy, dx, dy, ax - nx, ay - ny, bx - nx, by - ny),
+    rayCircle(ox, oy, dx, dy, ax, ay, rad),
+    rayCircle(ox, oy, dx, dy, bx, by, rad),
+  );
+}
+
 export interface Seg {
   x0: number;
   y0: number;
@@ -68,12 +94,14 @@ export interface Seg {
   y1: number;
 }
 
-export type HitKind = 'rail' | 'ball' | 'hole' | 'none';
+export type HitKind = 'rail' | 'ball' | 'hole' | 'part' | 'bumper' | 'none';
 
 interface Hit {
   t: number;
   kind: HitKind;
   rail?: Rail;
+  wall?: Wall;
+  bumper?: Bumper;
   ball?: Ball;
   pocket?: Pocket;
 }
@@ -120,6 +148,16 @@ function firstHit(
   for (const r of geom.rails) {
     const t = sweepRail(ox, oy, dx, dy, r);
     if (t < best.t) best = { t, kind: 'rail', rail: r };
+  }
+  for (const w of geom.walls) {
+    // A gate only stops balls coming from ahead of its arrow.
+    if (w.kind === 'gate' && (ox - w.ax) * w.nx + (oy - w.ay) * w.ny < 0) continue;
+    const t = sweepCapsule(ox, oy, dx, dy, w.ax, w.ay, w.bx, w.by, R + THICK);
+    if (t < best.t) best = { t, kind: 'part', wall: w };
+  }
+  for (const bp of geom.bumpers) {
+    const t = rayCircle(ox, oy, dx, dy, bp.x, bp.y, bp.r + R);
+    if (t < best.t) best = { t, kind: 'bumper', bumper: bp };
   }
   for (const b of balls) {
     if (!b.active || b.id === skipId) continue;
@@ -202,9 +240,12 @@ export function castGuide(
   const guide: Guide = { path: { x0: ox, y0: oy, x1: hx, y1: hy }, kind: first.kind, nx: 0, ny: 0 };
   if (curve && curve.length > 1) guide.curve = curve;
 
-  if (first.kind === 'rail' && first.rail) {
-    const r = first.rail;
-    const q = closestOnSegment(hx, hy, r.ax, r.ay, r.bx, r.by);
+  const bouncy = (first.kind === 'rail' && first.rail) || (first.kind === 'part' && first.wall) || first.bumper;
+  if (bouncy) {
+    let q = { x: hx, y: hy };
+    if (first.rail) q = closestOnSegment(hx, hy, first.rail.ax, first.rail.ay, first.rail.bx, first.rail.by);
+    else if (first.wall) q = closestOnSegment(hx, hy, first.wall.ax, first.wall.ay, first.wall.bx, first.wall.by);
+    else if (first.bumper) q = { x: first.bumper.x, y: first.bumper.y };
     let nx = hx - q.x;
     let ny = hy - q.y;
     const l = hyp(nx, ny) || 1;

@@ -356,7 +356,7 @@ export function drawGuide(
   ctx.stroke();
   ctx.setLineDash([]);
 
-  if (g.kind === 'rail') {
+  if (g.kind === 'rail' || g.kind === 'part' || g.kind === 'bumper') {
     const cx = x1 - g.nx * R;
     const cy = y1 - g.ny * R;
     ctx.save();

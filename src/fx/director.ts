@@ -24,6 +24,11 @@ const MISSES = [
   'so close (not really)',
 ];
 const STREAKS = ['', 'NICE!', 'SPICY!', 'TABLE WIZARD!', 'UNBENDLIEVABLE!'];
+const BUMPS = ['BOING!', 'DING!', 'PING!', 'BWONG!', 'BOINK!'];
+
+function pick<T>(list: readonly T[], r: () => number): T {
+  return list[Math.floor(r() * list.length)]!;
+}
 const BLOCKED: Record<string, string> = {
   'keep-out': 'NO FREE LUNCH!',
   budget: 'OUT OF STRETCH!',
@@ -57,6 +62,8 @@ export class Director {
   private turn = 0;
   private now = 0;
   private lastDialTick = 0;
+  private lastBumpPop = 0;
+  private bawked = false;
   /** English watch for the current shot: launch heading, the cue's velocity right after its
    * first contact, and which exclamations have been used. */
   private eng = {
@@ -106,6 +113,7 @@ export class Director {
         this.blammed = false;
         this.hits = [];
         this.cueWasBraking = false;
+        this.bawked = false;
       } else if (to === 'over') {
         this.resetCamera();
         fx.confettiRain = 5;
@@ -304,6 +312,64 @@ export class Director {
           } else if (r() < 0.5) {
             sfx.chomp();
           }
+          break;
+        }
+        case 'partHit': {
+          const sp = e.speed;
+          if (e.kind === 'glass') sfx.glassTink();
+          else sfx.boing(sp / 1700);
+          fx.balls.squash(e.ball.id, e.nx, e.ny, Math.min(0.38, sp / 2400));
+          if (sp > 250) fx.particles.dust(e.x, e.y, 2 + Math.round(sp / 600), sp * 0.12, r);
+          if (sp > 1200)
+            pop(pick(BIG_WALL, r), e.x + e.nx * 38, e.y + e.ny * 38, { size: 34, color: '#9ff0ff' });
+          break;
+        }
+        case 'bumperHit': {
+          const sp = e.speed;
+          sfx.bumper(sp / 1500);
+          fx.bumps.set(e.src, 0.3);
+          fx.balls.squash(e.ball.id, e.nx, e.ny, Math.min(0.42, sp / 2000));
+          fx.particles.ring(e.x, e.y, 70, COLORS.knob);
+          if (sp > 350 && this.now - this.lastBumpPop > 0.25) {
+            this.lastBumpPop = this.now;
+            pop(pick(BUMPS, r), e.x + e.nx * 40, e.y + e.ny * 40, { size: 32, color: '#ffe45c' });
+          }
+          this.cam.addShake(Math.min(0.2, sp / 8000));
+          break;
+        }
+        case 'glass': {
+          if (e.hp <= 0) {
+            sfx.glassSmash();
+            pop('CRASH!', e.x, e.y - 30, { size: 42, color: '#a0ecff', force: true });
+            fx.particles.shards(e.x, e.y, 16, 420, r);
+            this.cam.addShake(0.25);
+          } else {
+            pop('crack', e.x, e.y - 24, { size: 24, color: '#a0ecff' });
+          }
+          break;
+        }
+        case 'egg': {
+          const b = e.ball;
+          if (e.hp <= 0) {
+            sfx.splat();
+            pop('SPLAT!', b.x, b.y - 36, { size: 40, color: '#ffe45c', force: true });
+            fx.particles.yolk(b.x, b.y, r);
+            this.cam.addShake(0.12);
+          } else {
+            sfx.eggCrack();
+            pop('CRACK!', b.x, b.y - 32, { size: 30, color: '#fff3dc', force: true });
+          }
+          break;
+        }
+        case 'bomb': {
+          sfx.boom();
+          pop('BOOM!!', e.x, e.y - 40, { size: 64, color: '#ff8a1f', force: true, life: 1.2 });
+          fx.particles.ring(e.x, e.y, 360, '#ffd23f', 0.5);
+          fx.particles.ring(e.x, e.y, 240, '#ff4d6d', 0.4);
+          fx.particles.sparks(e.x, e.y, 0, -1, 26, 900, r, '#ffb347');
+          fx.particles.dust(e.x, e.y, 16, 420, r, '#555a70');
+          fx.flash = 0.6;
+          this.cam.addShake(0.8);
           break;
         }
         case 'kick':
@@ -514,6 +580,16 @@ export class Director {
       }
     }
     if (g.phase === 'sim' && this.eng.on) this.watchEnglish(dtReal);
+    if (g.phase === 'sim' && !this.bawked) {
+      // The chicken panics the moment it starts running.
+      const chick = g.balls.find((b, i) => b.variant === 'chicken' && b.active && g.world.driven[i]);
+      if (chick) {
+        this.bawked = true;
+        this.sfx.bawk();
+        fx.pops.add('BAWK!', chick.x, chick.y - 40, r, { size: 32, color: '#ffe45c', force: true });
+        fx.particles.feathers(chick.x, chick.y, r);
+      }
+    }
     if (g.phase === 'sim') {
       const cue = g.cue;
       if (cue.active && cue.braking && !this.cueWasBraking) {

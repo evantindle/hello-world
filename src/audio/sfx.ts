@@ -402,4 +402,50 @@ export class Sfx {
     this.tone('sine', 1100, 0.09, 0.2, { f1: 320 });
     this.hiss(0.05, 0.18, 'highpass', 2500);
   }
+
+  // ------------------------------------------------------------------ v2: toys and oddballs
+
+  /** Pinball bumper: a bright two-note bell. */
+  bumper(power: number): void {
+    if (!this.allow(8)) return;
+    const g = 0.06 + 0.1 * Math.min(1, power);
+    this.tone('triangle', 1318, 0.22, g);
+    this.tone('triangle', 1760, 0.18, g * 0.8, { delay: 0.03 });
+  }
+
+  /** Glass: a high ping when it cracks... */
+  glassTink(): void {
+    if (!this.allow(8)) return;
+    this.tone('sine', 2600, 0.12, 0.1);
+    this.tone('sine', 3900, 0.08, 0.05, { delay: 0.01 });
+  }
+
+  /** ...and a crash when it goes. */
+  glassSmash(): void {
+    this.hiss(0.5, 0.35, 'highpass', 3000, 1, 0, 6000);
+    for (let i = 0; i < 5; i++) this.tone('sine', 2200 + i * 530, 0.1, 0.05, { delay: 0.03 * i });
+  }
+
+  eggCrack(): void {
+    if (!this.allow(6)) return;
+    this.hiss(0.06, 0.3, 'bandpass', 1800, 3);
+    this.hiss(0.05, 0.25, 'bandpass', 1400, 3, 0.05);
+  }
+
+  splat(): void {
+    this.hiss(0.18, 0.35, 'lowpass', 900, 1, 0, 200);
+    this.tone('sine', 180, 0.15, 0.2, { f1: 60 });
+  }
+
+  boom(): void {
+    this.hiss(0.9, 0.55, 'lowpass', 1200, 0.7, 0, 90);
+    this.tone('sine', 90, 0.7, 0.45, { f1: 30 });
+    this.tone('square', 60, 0.25, 0.08, { lp: 300 });
+  }
+
+  bawk(): void {
+    if (!this.allow(4)) return;
+    this.tone('square', 620, 0.09, 0.07, { f1: 900, lp: 2400 });
+    this.tone('square', 760, 0.16, 0.07, { f1: 420, lp: 2400, delay: 0.1 });
+  }
 }

@@ -27,6 +27,8 @@ export class Fx {
   readonly holeR = new Map<number, number>();
   /** Per vertex id: seconds since a scratch bolted it (drives the wrench animation). */
   readonly bolted = new Map<number, number>();
+  /** Per bumper part id: seconds of hit flash left. */
+  readonly bumps = new Map<number, number>();
   readonly pegFlick: number[] = new Array<number>(PEGS).fill(0);
   lastPeg = 0;
   /** Strike speed lines. */
@@ -60,6 +62,7 @@ export class Fx {
     this.chomp.clear();
     this.holeR.clear();
     this.bolted.clear();
+    this.bumps.clear();
     this.speedLines = null;
     this.confettiRain = 0;
     this.fireworks = 0;
@@ -89,6 +92,10 @@ export class Fx {
     for (const [k, v] of this.bolted) {
       if (v > 2) this.bolted.delete(k);
       else this.bolted.set(k, v + dtReal);
+    }
+    for (const [k, v] of this.bumps) {
+      if (v - dt <= 0) this.bumps.delete(k);
+      else this.bumps.set(k, v - dt);
     }
     for (const [k, v] of this.chomp) {
       if (v - dt <= 0) this.chomp.delete(k);

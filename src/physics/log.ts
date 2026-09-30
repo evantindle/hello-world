@@ -30,6 +30,8 @@ export interface TurnLog {
   cracked: number[];
   broken: number[];
   exploded: number[];
+  /** Glass panes hit this shot: part id -> hits left (0 = shattered). */
+  glassHp: Record<number, number>;
   /** Where the cue ball came to rest (null if it did not survive the shot). */
   cueRest: { x: number; y: number } | null;
   /** Deepest collision generation reached. */
@@ -46,6 +48,7 @@ export function newLog(): TurnLog {
     cracked: [],
     broken: [],
     exploded: [],
+    glassHp: {},
     cueRest: null,
     maxGen: 0,
     timedOut: false,

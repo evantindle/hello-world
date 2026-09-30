@@ -1,5 +1,6 @@
 import { PLAY, R, RESHAPE_STEP } from '../config';
 import { clamp, hyp } from '../core/vec';
+import { THICK } from '../geom/parts';
 import { closestOnSegment, distToSegment, pointInPolygon } from '../geom/polygon';
 import {
   buildGeom,
@@ -124,6 +125,37 @@ export function settlePositions(
         p.y = q.y + ny * R;
         moved = true;
       }
+      // Toys shove too: two-sided walls and round bumpers.
+      for (const w of geom.walls) {
+        const q = closestOnSegment(p.x, p.y, w.ax, w.ay, w.bx, w.by);
+        const ox = p.x - q.x;
+        const oy = p.y - q.y;
+        const d = hyp(ox, oy);
+        const min = R + THICK;
+        if (d >= min - 1e-6) continue;
+        let nx = w.nx;
+        let ny = w.ny;
+        if (d > 1e-6) {
+          nx = ox / d;
+          ny = oy / d;
+        } else if ((p.x - w.ax) * w.nx + (p.y - w.ay) * w.ny < 0) {
+          nx = -nx;
+          ny = -ny;
+        }
+        p.x = q.x + nx * min;
+        p.y = q.y + ny * min;
+        moved = true;
+      }
+      for (const bp of geom.bumpers) {
+        const ox = p.x - bp.x;
+        const oy = p.y - bp.y;
+        const d = hyp(ox, oy);
+        const min = bp.r + R;
+        if (d >= min - 1e-6) continue;
+        p.x = bp.x + (d > 1e-6 ? ox / d : 1) * min;
+        p.y = bp.y + (d > 1e-6 ? oy / d : 0) * min;
+        moved = true;
+      }
     }
     for (let i = 0; i < n; i++) {
       const a = pos[i]!;
@@ -150,6 +182,12 @@ export function settlePositions(
   for (const p of pos) {
     for (const r of rails) {
       if (distToSegment(p.x, p.y, r.ax, r.ay, r.bx, r.by) < R - 0.5) return { ok: false, reason: 'crushed' };
+    }
+    for (const w of geom.walls) {
+      if (distToSegment(p.x, p.y, w.ax, w.ay, w.bx, w.by) < R + THICK - 0.5) return { ok: false, reason: 'crushed' };
+    }
+    for (const bp of geom.bumpers) {
+      if (hyp(p.x - bp.x, p.y - bp.y) < bp.r + R - 0.5) return { ok: false, reason: 'crushed' };
     }
   }
   for (let i = 0; i < n; i++) {
