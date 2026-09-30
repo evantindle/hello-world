@@ -34,7 +34,7 @@ import {
   withoutVertex,
 } from '../../src/geom/table';
 import { castGuide, rayCircle, raySegment } from '../../src/geom/raycast';
-import type { Ball } from '../../src/physics/world';
+import { makeBall, type Ball } from '../../src/physics/world';
 
 const P = (x: number, y: number) => ({ x, y });
 const DEG = Math.PI / 180;
@@ -220,18 +220,7 @@ describe('ray casting', () => {
     expect(raySegment(0, 0, 1, 0, 5, 1, 5, 2)).toBe(Infinity);
   });
 
-  const cueAt = (x: number, y: number): Ball => ({
-    id: 0,
-    kind: 'cue',
-    num: 0,
-    color: '#fff',
-    stripe: false,
-    x,
-    y,
-    vx: 0,
-    vy: 0,
-    active: true,
-  });
+  const cueAt = (x: number, y: number): Ball => makeBall({ id: 0, x, y });
 
   it('guide reflects off a rail with equal angles', () => {
     const g = buildGeom(createTable());
@@ -251,7 +240,7 @@ describe('ray casting', () => {
   it('guide reports a ball hit with the object ball leaving along the line of centres', () => {
     const g = buildGeom(createTable());
     const cue = cueAt(250, 250);
-    const obj: Ball = { ...cueAt(500, 250), id: 5, kind: 'object', num: 5 };
+    const obj = makeBall({ id: 5, x: 500, y: 250 });
     const guide = castGuide(g, [cue, obj], cue, 1, 0);
     expect(guide.kind).toBe('ball');
     expect(guide.path.x1).toBeCloseTo(452);

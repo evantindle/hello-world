@@ -47,6 +47,13 @@ export const clamp = (x: number, lo: number, hi: number): number => (x < lo ? lo
 
 export const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
 
+/** Wrap an angle into [0, TAU), leaving angles already in range exactly as they are. */
+export const wrapTau = (a: number): number => {
+  if (a >= 0 && a < TAU) return a;
+  const r = a % TAU;
+  return r < 0 ? r + TAU : r;
+};
+
 /** Wrap an angle into (-PI, PI]. */
 export const wrapAngle = (a: number): number => {
   let r = a % TAU;

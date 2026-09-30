@@ -11,4 +11,28 @@ export default defineConfig([
       '@typescript-eslint/no-non-null-assertion': 'off',
     },
   },
+  {
+    // Simulation code must replay bit-for-bit in every browser (replays, shared links, level
+    // solutions, multiplayer). Only + - * / and sqrt are exactly rounded everywhere.
+    files: ['src/physics/**/*.ts', 'src/geom/**/*.ts', 'src/game/reshape.ts', 'src/game/placement.ts'],
+    rules: {
+      'no-restricted-properties': [
+        'error',
+        ...['hypot', 'atan2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'exp', 'pow', 'log', 'cbrt'].map(
+          (property) => ({
+            object: 'Math',
+            property,
+            message: 'Not bit-reproducible across browsers: use + - * / and Math.sqrt (see hyp() in core/vec).',
+          }),
+        ),
+      ],
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "BinaryExpression[operator='**']",
+          message: 'Not bit-reproducible across browsers: multiply it out or use Math.sqrt.',
+        },
+      ],
+    },
+  },
 ]);

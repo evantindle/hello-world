@@ -11,15 +11,14 @@ import {
   STRIKE_HOLD,
   STRIKE_LUNGE,
   TAP_CANCEL,
-  V_SHOT_MAX,
-  V_SHOT_MIN,
 } from '../config';
 import { damp } from '../core/easing';
 import { Emitter } from '../core/emitter';
-import { createRng, randomSeed, type Rng } from '../core/rng';
-import { clamp01, hyp, TAU } from '../core/vec';
+import { randomSeed, rngFor, subSeed } from '../core/rng';
+import { clamp01, hyp, TAU, wrapTau } from '../core/vec';
 import { castGuide, type Guide } from '../geom/raycast';
 import { buildGeom, cloneTable, createTable, type Pocket, type Table, type TableGeom } from '../geom/table';
+import { launchFrom } from '../physics/launch';
 import { createWorld, stepWorld, type Ball, type PhysEvent, type World } from '../physics/world';
 import {
   DragSession,
@@ -31,6 +30,10 @@ import {
   type ReshapeHost,
 } from './reshape';
 import { findRespawnSpot, loadBest, rackBalls, rankFor, saveBest, type Rank } from './rules';
+import { cloneLog, type TurnRecord } from './record';
+import { V1_RULES, type Ruleset } from './ruleset';
+import { hashBoard, snapState } from './serialize';
+import { quantizeShot, type ShotQ } from './shot';
 import { Spin } from './spin';
 
 export type Phase = 'title' | 'spin' | 'plan' | 'strike' | 'sim' | 'resolve' | 'respawn' | 'over';
@@ -89,13 +92,26 @@ export interface GameOptions {
   seed?: number;
   /** Read/write the best score in localStorage (off in tests). */
   persist?: boolean;
+  /** Defaults to the original v1 rules. */
+  rules?: Ruleset;
+}
+
+/** Everything a new game needs: its rules and seed, and optionally a starting table and balls. */
+export interface GameSetup {
+  rules: Ruleset;
+  seed: number;
+  /** Starting table (cloned); default: the v1 rectangle. */
+  table?: Table;
+  /** Starting balls (cloned); default: the v1 rack, shuffled by the seed. */
+  balls?: Ball[];
+  levelId?: string;
 }
 
 export class Game implements ReshapeHost {
   readonly events = new Emitter<GameEvents>();
-  readonly par = PAR;
+  rules: Ruleset = V1_RULES;
+  levelId: string | null = null;
   seed = 0;
-  rng: Rng = createRng(1);
   phase: Phase = 'title';
   /** Seconds in the current phase (world time during the sim, real time otherwise). */
   phaseT = 0;
@@ -104,14 +120,23 @@ export class Game implements ReshapeHost {
   balls: Ball[] = [];
   world: World;
   budget = BUDGET;
+  /** Grab tokens left (token-limited rulesets); Infinity otherwise. */
+  tokens = Infinity;
   /** Pocket hunger 0..MAX_HUNGER: grows with every dry shot, resets when a ball drops. */
   hunger = 0;
   readonly spin = new Spin();
   /** Shot direction in radians; the stick sits on the opposite side of the cue ball. */
   aim = Math.PI;
+  /** Where the current spin will land, in [0, TAU): the aim is set to exactly this. */
+  spinTarget = Math.PI;
   charging = false;
   chargeT = 0;
   strikePower = 0;
+  /** The last shot, quantized (what replays and shared links store). */
+  shot: ShotQ | null = null;
+  /** Every stroke of this game so far, recorded. */
+  history: TurnRecord[] = [];
+  private pending: Omit<TurnRecord, 'log' | 'postHash'> | null = null;
   shots = 0;
   penalties = 0;
   streak = 0;
@@ -131,6 +156,12 @@ export class Game implements ReshapeHost {
   drag: DragSession | null = null;
   lastOver: GameOverInfo | null = null;
   private snapshot: Snapshot | null = null;
+  /** Budget and tokens at the start of the plan phase (undo restores them). */
+  private planBudget = BUDGET;
+  private planTokens = Infinity;
+  /** Something was bent since the plan phase began (or since the last undo). */
+  private edited = false;
+  private lastSetup: GameSetup | null = null;
   private acc = 0;
   private evs: PhysEvent[] = [];
   private readonly persist: boolean;
@@ -138,7 +169,7 @@ export class Game implements ReshapeHost {
   constructor(opts: GameOptions = {}) {
     this.persist = opts.persist ?? false;
     if (this.persist) this.best = loadBest();
-    this.setup(opts.seed ?? randomSeed());
+    this.setup({ rules: opts.rules ?? V1_RULES, seed: opts.seed ?? randomSeed() });
     this.world = createWorld(this.balls, this.geom);
   }
 
@@ -150,6 +181,15 @@ export class Game implements ReshapeHost {
 
   get score(): number {
     return this.shots + this.penalties;
+  }
+
+  get par(): number {
+    return this.rules.par ?? PAR;
+  }
+
+  /** The angle the NEXT stroke will spin to, when the rules make it knowable (Classic). */
+  get nextAngle(): number | null {
+    return this.angleFor(this.shots + 1, false);
   }
 
   get objectsLeft(): number {
@@ -168,7 +208,7 @@ export class Game implements ReshapeHost {
   }
 
   get canUndo(): boolean {
-    return this.canReshape && this.snapshot !== null && this.budget < BUDGET - 0.01;
+    return this.canReshape && this.snapshot !== null && this.edited;
   }
 
   guide(): Guide {
@@ -177,19 +217,25 @@ export class Game implements ReshapeHost {
 
   // ------------------------------------------------------------------ flow
 
-  private setup(seed: number): void {
+  private setup(s: GameSetup): void {
     // Wind down anything in flight so listeners (sounds, vignette) are told it stopped.
     if (this.drag) this.endDrag();
     if (this.charging) this.cancelCharge();
     if (this.slowmo) this.setSlowmo(false);
-    this.seed = seed >>> 0;
-    this.rng = createRng(this.seed);
-    this.table = createTable();
+    this.lastSetup = s;
+    this.history = [];
+    this.pending = null;
+    this.rules = s.rules;
+    this.levelId = s.levelId ?? null;
+    this.seed = s.seed >>> 0;
+    this.table = s.table ? cloneTable(s.table) : createTable();
     this.hunger = 0;
     this.geom = buildGeom(this.table, this.hunger);
-    this.balls = rackBalls(this.rng);
+    this.balls = s.balls ? s.balls.map((b) => ({ ...b })) : rackBalls(rngFor(this.seed, 'rack'));
     this.world = createWorld(this.balls, this.geom);
-    this.budget = BUDGET;
+    const lim = this.rules.reshape;
+    this.budget = lim.kind === 'budget' ? lim.perTurn : Infinity;
+    this.tokens = lim.kind === 'tokens' ? lim.tokens : Infinity;
     this.shots = 0;
     this.penalties = 0;
     this.streak = 0;
@@ -214,9 +260,26 @@ export class Game implements ReshapeHost {
     if (this.phase === 'title') this.enter('spin');
   }
 
-  restart(seed?: number): void {
-    this.setup(seed ?? randomSeed());
+  /** A new game from the given setup, straight into the first spin. */
+  load(s: GameSetup): void {
+    this.setup(s);
     this.enter('spin');
+  }
+
+  /** The same kind of game again (same rules and layout), with a new seed unless given one. */
+  restart(seed?: number): void {
+    const last = this.lastSetup ?? { rules: this.rules, seed: 0 };
+    this.load({ ...last, seed: seed ?? randomSeed() });
+  }
+
+  /** Stroke `k`'s landing angle: a level's sequence, or one independent random draw per stroke. */
+  private angleFor(k: number, draw = true): number | null {
+    const a = this.rules.angles;
+    if (a.kind === 'sequence' && a.deg.length > 0) {
+      const deg = a.deg[k % a.deg.length]!;
+      return wrapTau((deg * Math.PI) / 180);
+    }
+    return draw ? rngFor(this.seed, 'spin', k).range(0, TAU) : null;
   }
 
   private enter(to: Phase): void {
@@ -225,13 +288,20 @@ export class Game implements ReshapeHost {
     this.phaseT = 0;
     switch (to) {
       case 'spin': {
-        const target = this.forcedAngle ?? this.rng.range(0, TAU);
+        // One independent draw per stroke: forcing an angle (tests) or scratching never shifts
+        // the spins that follow.
+        const drawn = this.angleFor(this.shots)!;
+        const target = this.forcedAngle ?? drawn;
         this.forcedAngle = null;
-        this.spin.start(this.aim, target, 3 + this.rng.int(3));
+        this.spinTarget = wrapTau(target);
+        this.spin.start(this.aim, this.spinTarget, 3 + rngFor(this.seed, 'turns', this.shots).int(3));
         break;
       }
       case 'plan':
-        this.budget = BUDGET;
+        if (this.rules.reshape.kind === 'budget') this.budget = this.rules.reshape.perTurn;
+        this.planBudget = this.budget;
+        this.planTokens = this.tokens;
+        this.edited = false;
         this.charging = false;
         this.chargeT = 0;
         this.snapshot = this.takeSnapshot();
@@ -240,28 +310,23 @@ export class Game implements ReshapeHost {
         this.shots++;
         break;
       case 'sim': {
-        this.world = createWorld(this.balls, this.geom);
+        this.world = createWorld(this.balls, this.geom, subSeed(this.seed, 'world', this.shots));
         this.acc = 0;
         this.potted = [];
         this.scratched = false;
         this.scratchPocket = null;
         this.timedOut = false;
         const cue = this.cue;
-        cue.braking = false;
-        cue.rails = 0;
-        const p = this.strikePower;
-        const speed = V_SHOT_MIN + (V_SHOT_MAX - V_SHOT_MIN) * p * Math.sqrt(Math.sqrt(p)); // p^1.25
-        const dx = Math.cos(this.aim);
-        const dy = Math.sin(this.aim);
-        cue.vx = dx * speed;
-        cue.vy = dy * speed;
+        this.shot = quantizeShot(this.aim, this.strikePower);
+        this.pending = { stroke: this.shots, aim: this.aim, shot: this.shot, pre: snapState(this) };
+        const { dx, dy, speed } = launchFrom(cue, this.shot);
         this.events.emit('strike', { power: this.strikePower, x: cue.x, y: cue.y, dx, dy, speed });
         break;
       }
       case 'respawn': {
         const cue = this.cue;
         const hole = this.scratchPocket ?? { x: cue.x, y: cue.y };
-        const spot = findRespawnSpot(this.rng, this.geom, this.balls, cue.id);
+        const spot = findRespawnSpot(rngFor(this.seed, 'respawn', this.shots), this.geom, this.balls, cue.id);
         this.respawn = { fromX: hole.x, fromY: hole.y, toX: spot.x, toY: spot.y };
         cue.x = spot.x;
         cue.y = spot.y;
@@ -293,7 +358,7 @@ export class Game implements ReshapeHost {
         this.aim = this.spin.angle;
         if (ticks > 0) this.events.emit('spinTick', { speed: this.spin.speed, count: ticks });
         if (this.spin.done) {
-          this.aim = ((this.spin.to % TAU) + TAU) % TAU;
+          this.aim = this.spinTarget;
           this.events.emit('spinLand', { angle: this.aim });
           this.enter('plan');
         }
@@ -342,6 +407,11 @@ export class Game implements ReshapeHost {
       steps++;
       if (this.world.stopped) {
         if (this.slowmo) this.setSlowmo(false);
+        if (this.pending) {
+          const postHash = hashBoard(this.table, this.balls);
+          this.history.push({ ...this.pending, log: cloneLog(this.world.log), postHash });
+          this.pending = null;
+        }
         this.enter('resolve');
         return;
       }
@@ -407,7 +477,7 @@ export class Game implements ReshapeHost {
     }
     if (this.scratched) this.penalties++;
     const prevHunger = this.hunger;
-    this.hunger = potted.length > 0 ? 0 : Math.min(MAX_HUNGER, this.hunger + 1);
+    if (this.rules.hunger) this.hunger = potted.length > 0 ? 0 : Math.min(MAX_HUNGER, this.hunger + 1);
     if (this.hunger !== prevHunger) {
       this.geom = buildGeom(this.table, this.hunger);
       this.events.emit('hunger', { level: this.hunger, prev: prevHunger });
@@ -507,7 +577,9 @@ export class Game implements ReshapeHost {
       b.vx = 0;
       b.vy = 0;
     });
-    this.budget = BUDGET;
+    this.budget = this.planBudget;
+    this.tokens = this.planTokens;
+    this.edited = false;
     this.events.emit('undo', {});
     return true;
   }
@@ -529,6 +601,7 @@ export class Game implements ReshapeHost {
     const s = this.drag;
     if (!s) return null;
     const r = s.move(this, px, py);
+    if (r.applied > 0) this.edited = true;
     const v = this.table.verts.find((q) => q.id === s.vid);
     if (v) {
       if (r.applied > 0) this.events.emit('drag', { vid: s.vid, result: r, x: v.x, y: v.y });
@@ -552,7 +625,10 @@ export class Game implements ReshapeHost {
     const x = v.x;
     const y = v.y;
     const r = removeBend(this, vid);
-    if (r.removed) this.events.emit('bendRemoved', { x, y });
+    if (r.removed) {
+      this.edited = true;
+      this.events.emit('bendRemoved', { x, y });
+    }
     else if (r.blocked) this.events.emit('blocked', { vid, reason: r.blocked, x, y });
     return r.removed;
   }

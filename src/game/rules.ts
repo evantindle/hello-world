@@ -1,46 +1,22 @@
-import { BALL_COLORS, COLORS, CUE_START, PAR, R, RACK_APEX } from '../config';
+import { CUE_START, PAR, R, RACK_APEX } from '../config';
 import type { Rng } from '../core/rng';
 import { hyp } from '../core/vec';
 import { centroid, distToSegment, pointInPolygon } from '../geom/polygon';
 import type { TableGeom } from '../geom/table';
-import type { Ball } from '../physics/world';
+import { makeBall, type Ball } from '../physics/world';
 
 /** Cue ball plus ten object balls in a 1-2-3-4 triangle pointing at the cue. */
 export function rackBalls(rng: Rng): Ball[] {
-  const balls: Ball[] = [
-    {
-      id: 0,
-      kind: 'cue',
-      num: 0,
-      color: COLORS.cue,
-      stripe: false,
-      x: CUE_START.x,
-      y: CUE_START.y,
-      vx: 0,
-      vy: 0,
-      active: true,
-    },
-  ];
+  const balls: Ball[] = [makeBall({ id: 0, x: CUE_START.x, y: CUE_START.y })];
   const nums = rng.shuffle([2, 3, 4, 5, 6, 7, 8, 9, 10]);
   nums.unshift(1);
   const pitch = 2 * R + 0.6;
-  const dx = pitch * Math.cos(Math.PI / 6);
+  const dx = pitch * (Math.sqrt(3) / 2); // cos 30deg, without trig
   let k = 0;
   for (let row = 0; row < 4; row++) {
     for (let j = 0; j <= row; j++) {
       const num = nums[k++]!;
-      balls.push({
-        id: num,
-        kind: 'object',
-        num,
-        color: BALL_COLORS[num - 1]!,
-        stripe: num >= 9,
-        x: RACK_APEX.x + row * dx,
-        y: RACK_APEX.y + (j - row / 2) * pitch,
-        vx: 0,
-        vy: 0,
-        active: true,
-      });
+      balls.push(makeBall({ id: num, x: RACK_APEX.x + row * dx, y: RACK_APEX.y + (j - row / 2) * pitch }));
     }
   }
   return balls;

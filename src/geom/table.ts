@@ -139,6 +139,7 @@ export function buildGeom(t: Table, hunger = 0): TableGeom {
     inx /= il;
     iny /= il;
     // Display only: the open test below avoids atan2 so every browser agrees at the threshold.
+    // eslint-disable-next-line no-restricted-properties
     const angle = Math.PI - Math.atan2(d1x * d2y - d1y * d2x, d1x * d2x + d1y * d2y);
     const open = !angleBelow(a, v, b, POCKET_OPEN_TURN);
     openAt[i] = open;

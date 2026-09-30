@@ -97,6 +97,8 @@ export function interiorAngle(prev: Vec, p: Vec, next: Vec): number {
   const d1y = p.y - prev.y;
   const d2x = next.x - p.x;
   const d2y = next.y - p.y;
+  // For display and tests only; simulation code compares angles with angleBelow/angleAbove.
+  // eslint-disable-next-line no-restricted-properties
   const turn = Math.atan2(d1x * d2y - d1y * d2x, d1x * d2x + d1y * d2y);
   return Math.PI - turn;
 }
