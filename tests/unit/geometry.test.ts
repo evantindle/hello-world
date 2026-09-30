@@ -1,6 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { HOLE_OFFSET, MOUTH, POCKET_OPEN_MIN_DEG, TABLE_H, TABLE_W } from '../../src/config';
 import {
+  HOLE_OFFSET,
+  MAX_ANGLE_DEG,
+  MAX_ANGLE_TURN,
+  MIN_ANGLE_DEG,
+  MIN_ANGLE_TURN,
+  MOUTH,
+  POCKET_OPEN_MIN_DEG,
+  POCKET_OPEN_TURN,
+  TABLE_H,
+  TABLE_W,
+} from '../../src/config';
+import { subSeed } from '../../src/core/rng';
+import {
+  angleAbove,
+  angleBelow,
   centroid,
   closestOnSegment,
   interiorAngle,
@@ -61,6 +75,46 @@ describe('polygon primitives', () => {
     expect(interiorAngle(P(0, 0), P(10, 0), P(10, 10)) / DEG).toBeCloseTo(90);
     expect(interiorAngle(P(0, 0), P(10, 0), P(20, 0)) / DEG).toBeCloseTo(180);
     expect(interiorAngle(P(0, 0), P(10, 0), P(10, -10)) / DEG).toBeCloseTo(270);
+  });
+
+  it('the trig-free angle tests agree with interiorAngle and the degree constants', () => {
+    for (const [turn, deg] of [
+      [POCKET_OPEN_TURN, 180 - POCKET_OPEN_MIN_DEG],
+      [MIN_ANGLE_TURN, 180 - MIN_ANGLE_DEG],
+      [MAX_ANGLE_TURN, 180 - MAX_ANGLE_DEG],
+    ] as const) {
+      expect(turn.c).toBeCloseTo(Math.cos(deg * DEG), 14);
+      expect(turn.s).toBeCloseTo(Math.sin(deg * DEG), 14);
+    }
+    // Sweep the corner p = origin through every direction of the outgoing edge.
+    const prev = P(-100, 0);
+    const p = P(0, 0);
+    for (let k = 1; k < 720; k++) {
+      const a = (k / 720) * 2 * Math.PI;
+      const next = P(Math.cos(a) * 80, Math.sin(a) * 80);
+      const ang = interiorAngle(prev, p, next) / DEG;
+      if (Math.abs(ang - POCKET_OPEN_MIN_DEG) > 1e-6)
+        expect(angleBelow(prev, p, next, POCKET_OPEN_TURN)).toBe(ang < POCKET_OPEN_MIN_DEG);
+      if (Math.abs(ang - MIN_ANGLE_DEG) > 1e-6)
+        expect(angleBelow(prev, p, next, MIN_ANGLE_TURN)).toBe(ang < MIN_ANGLE_DEG);
+      if (Math.abs(ang - MAX_ANGLE_DEG) > 1e-6)
+        expect(angleAbove(prev, p, next, MAX_ANGLE_TURN)).toBe(ang > MAX_ANGLE_DEG);
+    }
+    // A hairpin is sharper than anything; straight on is 180.
+    expect(angleBelow(prev, p, P(-50, 0), MIN_ANGLE_TURN)).toBe(true);
+    expect(angleBelow(prev, p, P(50, 0), POCKET_OPEN_TURN)).toBe(false);
+    expect(angleAbove(prev, p, P(50, 0), MAX_ANGLE_TURN)).toBe(false);
+  });
+
+  it('sub-seeds are stable and independent per salt and index', () => {
+    expect(subSeed(42, 'angles', 3)).toBe(subSeed(42, 'angles', 3));
+    const seen = new Set([
+      subSeed(42, 'angles', 0),
+      subSeed(42, 'angles', 1),
+      subSeed(42, 'respawn', 0),
+      subSeed(43, 'angles', 0),
+    ]);
+    expect(seen.size).toBe(4);
   });
 
   it('nearest boundary reports the inward normal', () => {

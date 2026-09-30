@@ -45,10 +45,7 @@ export function hopState(game: Game): { x: number; y: number; h: number; k: numb
 
 export function drawBallShadows(ctx: CanvasRenderingContext2D, game: Game, fx: Fx, cam: Camera): void {
   // Shadows fall down-right on screen whatever the camera rotation.
-  const c = Math.cos(-cam.upright);
-  const s = Math.sin(-cam.upright);
-  const ox = 6 * c - 9 * s;
-  const oy = 6 * s + 9 * c;
+  const { x: ox, y: oy } = cam.screenToWorldDir(6, 9);
   ctx.fillStyle = 'rgba(10,4,26,0.34)';
   ctx.beginPath();
   for (const b of game.balls) {

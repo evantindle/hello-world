@@ -4,21 +4,21 @@ import {
   HOLE_OFFSET,
   HUNGER_CAPTURE,
   HUNGER_SUCTION,
-  MAX_ANGLE_DEG,
+  MAX_ANGLE_TURN,
   MAX_VERTS,
-  MIN_ANGLE_DEG,
+  MIN_ANGLE_TURN,
   MIN_AREA_FRAC,
   MIN_CLEARANCE,
   MIN_EDGE,
   MOUTH,
   PLAY,
-  POCKET_OPEN_MIN_DEG,
+  POCKET_OPEN_TURN,
   SUCTION_R,
   TABLE_H,
   TABLE_W,
 } from '../config';
-import type { Vec } from '../core/vec';
-import { distToSegment, interiorAngle, segmentsIntersect, signedArea } from './polygon';
+import { hyp, type Vec } from '../core/vec';
+import { angleAbove, angleBelow, distToSegment, segmentsIntersect, signedArea } from './polygon';
 
 export interface TableVertex {
   /** Stable identity across insertions and removals. */
@@ -82,7 +82,6 @@ export interface TableGeom {
 }
 
 export const AREA0 = TABLE_W * TABLE_H;
-const DEG = Math.PI / 180;
 
 export function createTable(): Table {
   const pts: [number, number][] = [
@@ -124,23 +123,24 @@ export function buildGeom(t: Table, hunger = 0): TableGeom {
     const b = vs[(i + 1) % n]!;
     let d1x = v.x - a.x;
     let d1y = v.y - a.y;
-    const l1 = Math.hypot(d1x, d1y) || 1;
+    const l1 = hyp(d1x, d1y) || 1;
     d1x /= l1;
     d1y /= l1;
     let d2x = b.x - v.x;
     let d2y = b.y - v.y;
-    const l2 = Math.hypot(d2x, d2y) || 1;
+    const l2 = hyp(d2x, d2y) || 1;
     d2x /= l2;
     d2y /= l2;
     // Sum of the two inward (left) normals bisects the interior angle for convex, collinear
     // and reflex vertices alike.
     let inx = -d1y - d2y;
     let iny = d1x + d2x;
-    const il = Math.hypot(inx, iny) || 1;
+    const il = hyp(inx, iny) || 1;
     inx /= il;
     iny /= il;
+    // Display only: the open test below avoids atan2 so every browser agrees at the threshold.
     const angle = Math.PI - Math.atan2(d1x * d2y - d1y * d2x, d1x * d2x + d1y * d2y);
-    const open = angle >= POCKET_OPEN_MIN_DEG * DEG;
+    const open = !angleBelow(a, v, b, POCKET_OPEN_TURN);
     openAt[i] = open;
     pockets.push({
       index: i,
@@ -165,7 +165,7 @@ export function buildGeom(t: Table, hunger = 0): TableGeom {
     const b = vs[(i + 1) % n]!;
     const dx = b.x - a.x;
     const dy = b.y - a.y;
-    const L = Math.max(Math.hypot(dx, dy), 1e-9);
+    const L = Math.max(hyp(dx, dy), 1e-9);
     let t0 = openAt[i] ? MOUTH / L : 0;
     let t1 = openAt[(i + 1) % n] ? 1 - MOUTH / L : 1;
     if (t0 > t1) t0 = t1 = (t0 + t1) / 2;
@@ -217,11 +217,13 @@ export function validateTable(t: Table, geom?: TableGeom): Validity {
   for (let i = 0; i < n; i++) {
     const a = vs[i]!;
     const b = vs[(i + 1) % n]!;
-    if (Math.hypot(b.x - a.x, b.y - a.y) < MIN_EDGE) return { ok: false, reason: 'short-edge' };
+    if (hyp(b.x - a.x, b.y - a.y) < MIN_EDGE) return { ok: false, reason: 'short-edge' };
   }
   for (let i = 0; i < n; i++) {
-    const ang = interiorAngle(vs[(i + n - 1) % n]!, vs[i]!, vs[(i + 1) % n]!);
-    if (ang < MIN_ANGLE_DEG * DEG || ang > MAX_ANGLE_DEG * DEG) return { ok: false, reason: 'sharp' };
+    const prev = vs[(i + n - 1) % n]!;
+    const next = vs[(i + 1) % n]!;
+    if (angleBelow(prev, vs[i]!, next, MIN_ANGLE_TURN) || angleAbove(prev, vs[i]!, next, MAX_ANGLE_TURN))
+      return { ok: false, reason: 'sharp' };
   }
   // Non-adjacent edges must not touch.
   for (let i = 0; i < n; i++) {
@@ -273,7 +275,7 @@ export function canSplitEdge(t: Table, edge: number): boolean {
   const n = t.verts.length;
   const a = t.verts[edge]!;
   const b = t.verts[(edge + 1) % n]!;
-  return Math.hypot(b.x - a.x, b.y - a.y) >= 2 * MIN_EDGE + 1;
+  return hyp(b.x - a.x, b.y - a.y) >= 2 * MIN_EDGE + 1;
 }
 
 /** Convenience used by rendering and the guide ray. */

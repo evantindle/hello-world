@@ -85,10 +85,17 @@ function feltDots(): P[] {
   return out;
 }
 
-export function drawTableBody(ctx: CanvasRenderingContext2D, game: Game, fx: Fx, vt: VisualTable): void {
-  // Drop shadow.
+export function drawTableBody(
+  ctx: CanvasRenderingContext2D,
+  game: Game,
+  fx: Fx,
+  vt: VisualTable,
+  cam: Camera,
+): void {
+  // Drop shadow, down-right on screen whatever the camera rotation.
   ctx.save();
-  ctx.translate(16, 26);
+  const sh = cam.screenToWorldDir(16, 26);
+  ctx.translate(sh.x, sh.y);
   tracePath(ctx, vt);
   ctx.lineJoin = 'round';
   ctx.fillStyle = 'rgba(8,2,22,0.38)';
@@ -476,8 +483,10 @@ export function drawHandles(
   const tag = tutorialAt as P | null;
   if (view.tutorial && tag && !game.drag) {
     const bob = Math.sin(t * 5) * 6;
+    // Hang the tag below the knob on screen, whichever way the camera has turned the table.
+    const off = cam.screenToWorldDir(0, 58 + bob);
     ctx.save();
-    ctx.translate(tag.x, tag.y + 58 + bob);
+    ctx.translate(tag.x + off.x, tag.y + off.y);
     ctx.rotate(cam.upright);
     ctx.scale(Math.max(1, (15 * px) / KNOB_R) * intro, Math.max(1, (15 * px) / KNOB_R) * intro);
     ctx.font = `26px "Bangers", Impact, sans-serif`;

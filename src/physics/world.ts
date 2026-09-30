@@ -18,6 +18,7 @@ import {
   V_MAX,
   V_STOP,
 } from '../config';
+import { hyp } from '../core/vec';
 import { centroid, nearestBoundary, pointInPolygon } from '../geom/polygon';
 import type { Pocket, Rail, TableGeom } from '../geom/table';
 
@@ -83,7 +84,7 @@ export function createWorld(balls: Ball[], geom: TableGeom): World {
 }
 
 export function speedOf(b: Ball): number {
-  return Math.hypot(b.vx, b.vy);
+  return hyp(b.vx, b.vy);
 }
 
 /** Advance the world by dt (normally the fixed step H), appending events to `out`. */
@@ -96,7 +97,7 @@ export function stepWorld(w: World, dt: number, out: PhysEvent[]): void {
   for (let i = 0; i < nb; i++) {
     const b = balls[i]!;
     if (!b.active) continue;
-    let s = Math.hypot(b.vx, b.vy);
+    let s = hyp(b.vx, b.vy);
     if (s > V_MAX) {
       const f = V_MAX / s;
       b.vx *= f;
@@ -265,7 +266,7 @@ function guard(w: World, out: PhysEvent[]): void {
     let bd = Infinity;
     for (const p of w.geom.pockets) {
       if (!p.open) continue;
-      const d = Math.hypot(p.x - b.x, p.y - b.y);
+      const d = hyp(p.x - b.x, p.y - b.y);
       if (d < bd) {
         bd = d;
         best = p;
@@ -338,7 +339,7 @@ function friction(w: World, h: number): void {
   for (let i = 0; i < balls.length; i++) {
     const b = balls[i]!;
     if (!b.active) continue;
-    const sp = Math.hypot(b.vx, b.vy);
+    const sp = hyp(b.vx, b.vy);
     if (sp === 0) continue;
     const k = b.braking ? CUE_BRAKE : 1;
     const sp2 = Math.max(0, sp - A_ROLL * k * h) * (1 - K_DRAG * k * h);

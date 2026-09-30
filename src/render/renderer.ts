@@ -40,7 +40,7 @@ export class Renderer {
     ctx.clearRect(0, 0, cam.cssW, cam.cssH);
     cam.apply(ctx);
     const vt = buildVisual(game.table, fx.jelly);
-    drawTableBody(ctx, game, fx, vt);
+    drawTableBody(ctx, game, fx, vt, cam);
     drawPockets(ctx, game, fx);
     const guide = game.phase === 'plan' ? game.guide() : undefined;
     drawGuide(ctx, game, fx, cam, 'under', guide);

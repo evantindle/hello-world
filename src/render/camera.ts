@@ -48,6 +48,11 @@ export class Camera {
     return this.fitScale * this.zoom;
   }
 
+  /** A screen-space direction (shadows fall down-right, confetti falls down) in world axes. */
+  screenToWorldDir(x: number, y: number): Vec {
+    return this.rotated ? { x: y, y: -x } : { x, y };
+  }
+
   /** Angle to counter-rotate text and faces so they stay upright on screen. */
   get upright(): number {
     return this.rotated ? -Math.PI / 2 : 0;

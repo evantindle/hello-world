@@ -1,3 +1,4 @@
+import { TABLE_H, TABLE_W, VIEW_MARGIN } from '../config';
 import { damp } from '../core/easing';
 import type { Game } from '../game/game';
 import { PEGS } from '../game/spin';
@@ -39,6 +40,8 @@ export class Fx {
   hungerWobble = 0;
   /** The stick pull when the shot was released (used by the strike lunge). */
   releasePull = 0;
+  /** The bottom of the screen as a world direction; set from the camera every frame. */
+  down = { x: 0, y: 1 };
 
   constructor(readonly rand: () => number) {}
 
@@ -65,6 +68,7 @@ export class Fx {
     this.time += dt;
     this.jelly.sync(game.table);
     this.jelly.update(dt);
+    this.particles.down = this.down;
     this.particles.update(dt);
     this.pops.update(dt);
     this.balls.update(dt, game.balls, this.rand, look);
@@ -92,17 +96,26 @@ export class Fx {
     while (this.ripples.length && this.ripples[0]!.t > 0.7) this.ripples.shift();
     this.hungerWobble += dt * (2 + game.hunger * 4);
 
-    // Game-over party.
+    // Game-over party: confetti rains from the top edge of the screen.
     if (this.confettiRain > 0) {
       this.confettiRain -= dtReal;
       const n = Math.random() < 0.9 ? 3 : 1;
+      const d = this.down;
+      // Screen-right in world axes, and the view's half extents along each screen axis.
+      const rx = d.y;
+      const ry = -d.x;
+      const halfW = (d.y !== 0 ? TABLE_W : TABLE_H) / 2 + VIEW_MARGIN;
+      const halfH = (d.y !== 0 ? TABLE_H : TABLE_W) / 2 + VIEW_MARGIN;
       for (let i = 0; i < n; i++) {
+        const across = (this.rand() - 0.5) * 2 * halfW;
+        const side = (this.rand() - 0.5) * 60;
+        const fall = 80 + this.rand() * 120;
         this.particles.spawn({
           kind: 'confetti',
-          x: -150 + this.rand() * 1300,
-          y: -200,
-          vx: (this.rand() - 0.5) * 60,
-          vy: 80 + this.rand() * 120,
+          x: TABLE_W / 2 + rx * across - d.x * (halfH + 50),
+          y: TABLE_H / 2 + ry * across - d.y * (halfH + 50),
+          vx: rx * side + d.x * fall,
+          vy: ry * side + d.y * fall,
           size: 8 + this.rand() * 7,
           rot: this.rand() * 6,
           vr: (this.rand() - 0.5) * 14,

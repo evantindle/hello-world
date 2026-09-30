@@ -17,7 +17,7 @@ import {
 import { damp } from '../core/easing';
 import { Emitter } from '../core/emitter';
 import { createRng, randomSeed, type Rng } from '../core/rng';
-import { clamp01, TAU } from '../core/vec';
+import { clamp01, hyp, TAU } from '../core/vec';
 import { castGuide, type Guide } from '../geom/raycast';
 import { buildGeom, cloneTable, createTable, type Pocket, type Table, type TableGeom } from '../geom/table';
 import { createWorld, stepWorld, type Ball, type PhysEvent, type World } from '../physics/world';
@@ -249,7 +249,8 @@ export class Game implements ReshapeHost {
         const cue = this.cue;
         cue.braking = false;
         cue.rails = 0;
-        const speed = V_SHOT_MIN + (V_SHOT_MAX - V_SHOT_MIN) * this.strikePower ** 1.25;
+        const p = this.strikePower;
+        const speed = V_SHOT_MIN + (V_SHOT_MAX - V_SHOT_MIN) * p * Math.sqrt(Math.sqrt(p)); // p^1.25
         const dx = Math.cos(this.aim);
         const dy = Math.sin(this.aim);
         cue.vx = dx * speed;
@@ -369,7 +370,7 @@ export class Game implements ReshapeHost {
     let want = false;
     if (this.slowmoLeft > 0 && this.objectsLeft === 1) {
       const b = this.balls.find((o) => o.kind === 'object' && o.active)!;
-      const sp = Math.hypot(b.vx, b.vy);
+      const sp = hyp(b.vx, b.vy);
       if (sp > 25) {
         for (const p of this.geom.pockets) {
           if (!p.open) continue;
@@ -379,7 +380,7 @@ export class Game implements ReshapeHost {
           if (along <= 0) continue;
           const perp = Math.abs(dx * b.vy - dy * b.vx) / sp;
           const soon = along / sp < 0.5 && along < 480;
-          const slurping = Math.hypot(dx, dy) < p.sr;
+          const slurping = hyp(dx, dy) < p.sr;
           if ((perp < p.r * 1.3 && soon) || slurping) {
             want = true;
             break;

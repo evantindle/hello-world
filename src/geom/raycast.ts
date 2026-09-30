@@ -1,4 +1,5 @@
 import { R } from '../config';
+import { hyp } from '../core/vec';
 import type { Ball } from '../physics/world';
 import { closestOnSegment } from './polygon';
 import type { Pocket, Rail, TableGeom } from './table';
@@ -143,7 +144,7 @@ export function castGuide(
     const q = closestOnSegment(hx, hy, r.ax, r.ay, r.bx, r.by);
     let nx = hx - q.x;
     let ny = hy - q.y;
-    const l = Math.hypot(nx, ny) || 1;
+    const l = hyp(nx, ny) || 1;
     nx /= l;
     ny /= l;
     guide.nx = nx;
@@ -159,7 +160,7 @@ export function castGuide(
     const b = first.ball;
     let nx = hx - b.x;
     let ny = hy - b.y;
-    const l = Math.hypot(nx, ny) || 1;
+    const l = hyp(nx, ny) || 1;
     nx /= l;
     ny /= l;
     guide.nx = nx;
@@ -169,7 +170,7 @@ export function castGuide(
     const dn = dx * nx + dy * ny;
     let tx = dx - dn * nx;
     let ty = dy - dn * ny;
-    const tl = Math.hypot(tx, ty);
+    const tl = hyp(tx, ty);
     if (tl > 1e-3) {
       tx /= tl;
       ty /= tl;

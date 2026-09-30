@@ -15,7 +15,7 @@ export interface Particle {
   vr: number;
   color: string;
   drag: number;
-  /** Screen-space "gravity" (world units/s^2 along +y of the world). */
+  /** Gravity toward the bottom of the screen, world units/s^2. */
   g: number;
 }
 
@@ -24,6 +24,14 @@ const CONFETTI = ['#ff4d6d', '#ffd23f', '#3a86ff', '#06d6a0', '#8e44ec', '#ff8a1
 export class Particles {
   readonly list: Particle[] = [];
   cap = 800;
+  /** The bottom of the screen as a world direction (the camera turns the table on phones). */
+  down = { x: 0, y: 1 };
+
+  /** A screen-space vector (x right, y down) in world axes. */
+  private screen(sx: number, sy: number): { x: number; y: number } {
+    const d = this.down;
+    return { x: sx * d.y + sy * d.x, y: sy * d.y - sx * d.x };
+  }
 
   spawn(p: Partial<Particle> & Pick<Particle, 'kind' | 'x' | 'y'>): void {
     if (this.list.length >= this.cap) this.list.shift();
@@ -55,8 +63,8 @@ export class Particles {
       p.life -= dt;
       if (p.life <= 0) continue;
       const d = Math.exp(-p.drag * dt);
-      p.vx *= d;
-      p.vy = p.vy * d + p.g * dt;
+      p.vx = p.vx * d + p.g * this.down.x * dt;
+      p.vy = p.vy * d + p.g * this.down.y * dt;
       p.x += p.vx * dt;
       p.y += p.vy * dt;
       p.rot += p.vr * dt;
@@ -117,12 +125,13 @@ export class Particles {
     for (let i = 0; i < n; i++) {
       const a = rand() * Math.PI * 2;
       const s = speed * (0.3 + rand());
+      const up = this.screen(0, -speed * 0.4);
       this.spawn({
         kind: 'confetti',
         x,
         y,
-        vx: Math.cos(a) * s,
-        vy: Math.sin(a) * s - speed * 0.4,
+        vx: Math.cos(a) * s + up.x,
+        vy: Math.sin(a) * s + up.y,
         size: 7 + rand() * 7,
         rot: rand() * 6,
         vr: (rand() - 0.5) * 18,
@@ -161,12 +170,13 @@ export class Particles {
   sweat(x: number, y: number, rand: () => number): void {
     const a = -Math.PI / 2 + (rand() - 0.5) * 2.4;
     const s = 120 + rand() * 120;
+    const v = this.screen(Math.cos(a) * s, Math.sin(a) * s);
     this.spawn({
       kind: 'sweat',
       x,
       y,
-      vx: Math.cos(a) * s,
-      vy: Math.sin(a) * s,
+      vx: v.x,
+      vy: v.y,
       size: 5 + rand() * 3,
       life: 0.6,
       drag: 1,
@@ -176,11 +186,14 @@ export class Particles {
   }
 
   drool(x: number, y: number, rand: () => number): void {
+    const j = this.screen((rand() - 0.5) * 16, 0);
+    const v = this.screen(0, 20);
     this.spawn({
       kind: 'drool',
-      x: x + (rand() - 0.5) * 16,
-      y,
-      vy: 20,
+      x: x + j.x,
+      y: y + j.y,
+      vx: v.x,
+      vy: v.y,
       size: 5,
       life: 1.1,
       drag: 0.5,

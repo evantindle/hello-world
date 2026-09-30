@@ -1,5 +1,6 @@
 import { BALL_COLORS, COLORS, CUE_START, PAR, R, RACK_APEX } from '../config';
 import type { Rng } from '../core/rng';
+import { hyp } from '../core/vec';
 import { centroid, distToSegment, pointInPolygon } from '../geom/polygon';
 import type { TableGeom } from '../geom/table';
 import type { Ball } from '../physics/world';
@@ -86,14 +87,14 @@ export function clearance(
   for (const r of geom.rails) score = Math.min(score, distToSegment(x, y, r.ax, r.ay, r.bx, r.by) - R);
   for (const b of balls) {
     if (!b.active || b.id === selfId) continue;
-    score = Math.min(score, Math.hypot(b.x - x, b.y - y) - 2 * R);
+    score = Math.min(score, hyp(b.x - x, b.y - y) - 2 * R);
   }
   for (const p of geom.pockets) {
     if (!p.open) continue;
-    score = Math.min(score, Math.hypot(p.x - x, p.y - y) - p.sr - R);
+    score = Math.min(score, hyp(p.x - x, p.y - y) - p.sr - R);
   }
   // Prefer spots that are not hugging a hole even if the table is crowded.
-  for (const p of geom.pockets) score = Math.min(score, Math.hypot(p.x - x, p.y - y) - p.r);
+  for (const p of geom.pockets) score = Math.min(score, hyp(p.x - x, p.y - y) - p.r);
   return score;
 }
 

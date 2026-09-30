@@ -44,6 +44,12 @@ export const MAX_HUNGER = 3;
 export const CUE_CAPTURE_R = 0.75 * CAPTURE_R;
 /** Below this interior angle a pocket mouth is narrower than a ball: it closes. */
 export const POCKET_OPEN_MIN_DEG = 56;
+/**
+ * Angle thresholds as the (cos, sin) of the matching turn angle PI - threshold, written out as
+ * literals so the comparisons need no trig (whose last bit varies by browser). A unit test keeps
+ * them in step with the degree values.
+ */
+export const POCKET_OPEN_TURN = { c: -0.5591929034707467, s: 0.8290375725550417 }; // 180 - 56
 
 // ---------------------------------------------------------------- reshaping
 export const MIN_EDGE = 5 * R;
@@ -52,6 +58,8 @@ export const MIN_AREA_FRAC = 0.4;
 export const MAX_VERTS = 12;
 export const MIN_ANGLE_DEG = 20;
 export const MAX_ANGLE_DEG = 340;
+export const MIN_ANGLE_TURN = { c: -0.9396926207859083, s: 0.3420201433256689 }; // 180 - 20
+export const MAX_ANGLE_TURN = { c: -0.9396926207859083, s: -0.3420201433256689 }; // 180 - 340
 /** Stretch budget per turn, in world units of vertex travel. */
 export const BUDGET = 600;
 /** Reshaping may not bring a ball inside an open hole's suction radius (no free pots). */

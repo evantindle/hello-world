@@ -1,5 +1,5 @@
 import { PLAY, R, RESHAPE_STEP } from '../config';
-import { clamp } from '../core/vec';
+import { clamp, hyp } from '../core/vec';
 import { closestOnSegment, distToSegment, pointInPolygon } from '../geom/polygon';
 import {
   buildGeom,
@@ -67,7 +67,7 @@ export function hitHandle(t: Table, x: number, y: number, radius: number): Handl
   let best: Handle | null = null;
   let bd = Infinity;
   for (const h of listHandles(t)) {
-    const d = Math.hypot(h.x - x, h.y - y) * (h.kind === 'edge' ? 1.25 : 1);
+    const d = hyp(h.x - x, h.y - y) * (h.kind === 'edge' ? 1.25 : 1);
     if (d < radius && d < bd) {
       bd = d;
       best = h;
@@ -97,7 +97,7 @@ export function settlePositions(
         const q = closestOnSegment(p.x, p.y, r.ax, r.ay, r.bx, r.by);
         const ox = p.x - q.x;
         const oy = p.y - q.y;
-        const d = Math.hypot(ox, oy);
+        const d = hyp(ox, oy);
         if (d >= R - 1e-6) continue;
         // Radial push, except when the centre is behind the rail within its span (it slipped
         // through): then push straight back along the inward normal.
@@ -119,7 +119,7 @@ export function settlePositions(
         const b = pos[j]!;
         const dx = b.x - a.x;
         const dy = b.y - a.y;
-        const d = Math.hypot(dx, dy);
+        const d = hyp(dx, dy);
         if (d >= min - 1e-6) continue;
         const nx = d > 1e-9 ? dx / d : 1;
         const ny = d > 1e-9 ? dy / d : 0;
@@ -142,7 +142,7 @@ export function settlePositions(
   }
   for (let i = 0; i < n; i++) {
     for (let j = i + 1; j < n; j++) {
-      if (Math.hypot(pos[j]!.x - pos[i]!.x, pos[j]!.y - pos[i]!.y) < min - 0.5)
+      if (hyp(pos[j]!.x - pos[i]!.x, pos[j]!.y - pos[i]!.y) < min - 0.5)
         return { ok: false, reason: 'crushed' };
     }
   }
@@ -150,9 +150,9 @@ export function settlePositions(
     if (!pk.open) continue;
     const before = prevGeom.pockets.find((q) => q.vid === pk.vid);
     for (let i = 0; i < n; i++) {
-      const da = Math.hypot(pos[i]!.x - pk.x, pos[i]!.y - pk.y);
+      const da = hyp(pos[i]!.x - pk.x, pos[i]!.y - pk.y);
       if (da >= pk.sr) continue;
-      const db = before && before.open ? Math.hypot(prev[i]!.x - before.x, prev[i]!.y - before.y) : Infinity;
+      const db = before && before.open ? hyp(prev[i]!.x - before.x, prev[i]!.y - before.y) : Infinity;
       if (da < db - 0.01) return { ok: false, reason: 'keep-out' };
     }
   }
@@ -168,7 +168,7 @@ function sweepVertex(host: ReshapeHost, idx: number, tx: number, ty: number, val
   const v = host.table.verts[idx]!;
   const dx = tx - v.x;
   const dy = ty - v.y;
-  const L = Math.hypot(dx, dy);
+  const L = hyp(dx, dy);
   if (L < 1e-6) return res;
   const steps = Math.max(1, Math.ceil(L / RESHAPE_STEP));
   const fromX = v.x;
@@ -212,7 +212,7 @@ function sweepVertex(host: ReshapeHost, idx: number, tx: number, ty: number, val
     b.x = p.x;
     b.y = p.y;
   });
-  res.applied = Math.hypot(goodX - fromX, goodY - fromY);
+  res.applied = hyp(goodX - fromX, goodY - fromY);
   return res;
 }
 
@@ -225,7 +225,7 @@ export function moveVertex(host: ReshapeHost, vid: number, tx: number, ty: numbe
   ty = clamp(ty, PLAY.minY, PLAY.maxY);
   let dx = tx - v.x;
   let dy = ty - v.y;
-  const L = Math.hypot(dx, dy);
+  const L = hyp(dx, dy);
   if (L < 1e-3) return { applied: 0, blocked: null, pushed: [] };
   let budgetClipped = false;
   if (L > host.budget) {
@@ -256,7 +256,7 @@ export function removeBend(host: ReshapeHost, vid: number): MoveResult & { remov
   const a = t.verts[(idx + n - 1) % n]!;
   const b = t.verts[(idx + 1) % n]!;
   const q = closestOnSegment(v.x, v.y, a.x, a.y, b.x, b.y);
-  const cost = Math.hypot(v.x - q.x, v.y - q.y);
+  const cost = hyp(v.x - q.x, v.y - q.y);
   if (cost > host.budget + 1e-6) return fail('budget');
 
   const saved = {

@@ -62,6 +62,7 @@ resize();
 
 let manual = false;
 function step(dt: number): void {
+  fx.down = cam.screenToWorldDir(0, 1);
   game.update(dt);
   autopilot?.update(dt);
   director.update(dt);
