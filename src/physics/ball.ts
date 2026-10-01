@@ -46,8 +46,10 @@ export interface Ball {
   gen: number;
   /** Cushions hit this shot. */
   banks: number;
-  /** Boosters, bumpers and portals this ball went through this shot. */
+  /** Boosters, bumpers, portals and black holes this ball went through this shot. */
   via: number;
+  /** ...of which portals and black holes (the teleports). */
+  warps: number;
 }
 
 export const UNTOUCHED = 255;
@@ -100,6 +102,7 @@ export function makeBall(o: BallInit): Ball {
     gen: kind === 'cue' ? 0 : UNTOUCHED,
     banks: 0,
     via: 0,
+    warps: 0,
   };
 }
 
@@ -119,4 +122,5 @@ export function clearTally(b: Ball): void {
   b.gen = b.kind === 'cue' ? 0 : UNTOUCHED;
   b.banks = 0;
   b.via = 0;
+  b.warps = 0;
 }

@@ -22,7 +22,7 @@ export interface InputHooks {
  * The mouse wheel over a toy (or Q / E for the selected one) turns it too.
  * Keys: Space/Enter shoots, arrows turn the power dial (Shift for big steps), Esc cancels a
  * windup, Z/Backspace undoes, Y or Shift+Z redoes, R resets the turn's edits, Q/E turn the selected
- * toy (Shift for fine steps), M mutes.
+ * toy (Shift for fine steps), hold F to fast-forward a shot, M mutes.
  */
 export class Input {
   hover: Handle | null = null;
@@ -63,6 +63,10 @@ export class Input {
     window.addEventListener('pointercancel', this.cancel);
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     window.addEventListener('keydown', this.keydown);
+    window.addEventListener('keyup', (e) => {
+      if (e.code === 'KeyF') this.game.ff = false;
+    });
+    window.addEventListener('blur', () => (this.game.ff = false));
     game.events.on('phase', ({ to }) => {
       if (to !== 'plan') this.selected = null;
     });
@@ -324,6 +328,9 @@ export class Input {
         e.preventDefault();
         this.turnBy(id, (e.code === 'KeyE' ? 1 : -1) * (e.shiftKey ? 1 : 3));
       }
+    } else if (e.code === 'KeyF') {
+      // Hold to fast-forward the shot.
+      this.game.ff = true;
     } else if (e.code === 'KeyM') {
       this.hooks.toggleMute();
     }

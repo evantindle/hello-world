@@ -14,6 +14,8 @@ const ICON_REDO =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 14 5-5-5-5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>';
 const ICON_RESET =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.4-5.7" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/><path d="M4 4v5h5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const ICON_FF =
+  '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5l9 7-9 7zM12 5l9 7-9 7z" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>';
 const ICON_RESTART =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12a7 7 0 1 0 2.1-5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M4 3.5v5h5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
@@ -54,8 +56,13 @@ function wobbleTitle(text: string): string {
 /** The DOM overlay: counters, meters, buttons, toasts, title and score cards. */
 export class Hud {
   private strokes: HTMLElement;
+  private styleNum: HTMLElement;
+  private lastStyle = -1;
+  private ff: HTMLButtonElement;
   private best: HTMLElement;
   private balls: HTMLElement[] = [];
+  private tableName: HTMLElement;
+  private lastName: string | null = null;
   private stretch: HTMLElement;
   private stretchFill: HTMLElement;
   private stretchNum: HTMLElement;
@@ -89,7 +96,8 @@ export class Hud {
     const sc = el('div', 'card score');
     sc.append(el('div', 'label', 'STROKES'));
     this.strokes = el('div', 'value', '0');
-    sc.append(this.strokes, el('div', 'sub', `PAR ${game.par}`));
+    this.styleNum = el('div', 'sub style', '');
+    sc.append(this.strokes, el('div', 'sub', `PAR ${game.par}`), this.styleNum);
     const rack = el('div', 'rack');
     for (let n = 1; n <= 10; n++) {
       const d = el('div', `pip${n >= 9 ? ' dotty' : ''}`, `<span>${n}</span>`);
@@ -120,6 +128,7 @@ export class Hud {
     });
     right.append(bc, this.mute, restart);
     top.append(sc, rack, right);
+    this.tableName = el('div', 'table-name');
 
     this.hunger = el('div', 'hunger');
     this.banner = el('div', 'banner');
@@ -139,7 +148,9 @@ export class Hud {
     };
     this.undo = editBtn('undo', ICON_UNDO, 'UNDO', 'Undo (Z)', () => this.game.undo());
     this.redo = editBtn('redo', ICON_REDO, 'REDO', 'Redo (Y)', () => this.game.redo());
-    this.reset = editBtn('reset', ICON_RESET, 'RESET', 'Put the table back how this turn began (R)', () => this.game.reset());
+    this.reset = editBtn('reset', ICON_RESET, 'RESET', 'Put the table back how this turn began (R)', () =>
+      this.game.reset(),
+    );
     const edits = el('div', 'edits');
     edits.append(this.undo, this.redo, this.reset);
     const meter = el('div', 'meter');
@@ -167,12 +178,40 @@ export class Hud {
     });
     this.cluster = el('div', 'shoot-cluster');
     this.cluster.append(this.spin.el, this.dial.el);
-    bottom.append(this.stretch, this.hint, this.cluster);
+    // Hold to fast-forward a shot.
+    this.ff = el('button', 'btn ff', `${ICON_FF}<span>HOLD</span>`) as HTMLButtonElement;
+    this.ff.title = 'Hold to fast-forward (F)';
+    this.ff.setAttribute('aria-label', 'Fast-forward');
+    const ffOff = () => (this.game.ff = false);
+    this.ff.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      this.hooks.gesture();
+      this.game.ff = true;
+      try {
+        this.ff.setPointerCapture(e.pointerId);
+      } catch {
+        // Synthetic pointers cannot be captured.
+      }
+    });
+    this.ff.addEventListener('pointerup', ffOff);
+    this.ff.addEventListener('pointercancel', ffOff);
+    this.ff.addEventListener('lostpointercapture', ffOff);
+    bottom.append(this.stretch, this.hint, this.cluster, this.ff);
 
     this.title = this.buildTitle();
     this.over = el('div', 'overlay over hidden');
 
-    root.append(top, this.hunger, this.banner, this.toasts, this.tray.el, bottom, this.title, this.over);
+    root.append(
+      top,
+      this.tableName,
+      this.hunger,
+      this.banner,
+      this.toasts,
+      this.tray.el,
+      bottom,
+      this.title,
+      this.over,
+    );
     this.syncMute();
   }
 
@@ -239,6 +278,19 @@ export class Hud {
       if (this.lastScore >= 0) this.punch(this.strokes);
       this.lastScore = score;
     }
+    if (g.style !== this.lastStyle) {
+      this.styleNum.textContent = g.style > 0 ? `STYLE ${g.style.toLocaleString('en-US')}` : '';
+      if (this.lastStyle >= 0 && g.style > this.lastStyle) this.punch(this.styleNum);
+      this.lastStyle = g.style;
+    }
+    if (g.tableName !== this.lastName) {
+      this.lastName = g.tableName;
+      this.tableName.textContent = g.tableName ?? '';
+    }
+    this.tableName.classList.toggle('show', !!g.tableName && g.phase !== 'title' && g.phase !== 'over');
+    const simming = g.phase === 'sim';
+    this.ff.classList.toggle('show', simming);
+    this.ff.classList.toggle('on', simming && g.ff);
     if (g.best !== this.lastBest) {
       this.best.textContent = g.best === null ? '–' : String(g.best);
       this.lastBest = g.best;
@@ -266,7 +318,10 @@ export class Hud {
     if (tokenText !== this.lastTokens) {
       this.lastTokens = tokenText;
       if (lim.kind === 'tokens') {
-        const pips = Array.from({ length: lim.tokens }, (_, i) => `<i class="${i < g.tokens ? 'on' : ''}"></i>`).join('');
+        const pips = Array.from(
+          { length: lim.tokens },
+          (_, i) => `<i class="${i < g.tokens ? 'on' : ''}"></i>`,
+        ).join('');
         this.tokens.innerHTML = `<span class="tokens-label">GRABS</span><span class="tokens-pips">${pips}</span>`;
         this.tokens.title = `${g.tokens} of ${lim.tokens} grabs left`;
       } else this.tokens.innerHTML = '';
@@ -335,6 +390,7 @@ export class Hud {
         <div class="over-par">${parText} ${extra}</div>
         <div class="over-rank">${info.rank.title}</div>
         <div class="over-blurb">${info.rank.blurb}</div>
+        ${info.style > 0 ? `<div class="over-style">STYLE ${info.style.toLocaleString('en-US')}</div>` : ''}
         <div class="over-best">${info.isBest ? '★ NEW BEST! ★' : `Best: ${info.best}`}${info.bestStreak > 1 ? ` · longest streak ${info.bestStreak}` : ''}</div>
       </div>`;
     const again = el('button', 'btn big play', 'PLAY AGAIN') as HTMLButtonElement;

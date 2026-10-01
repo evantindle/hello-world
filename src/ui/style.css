@@ -863,6 +863,88 @@ body {
   display: none;
 }
 
+/* ------------------------------------------------------------------ style points, fast-forward */
+
+.table-name {
+  position: absolute;
+  top: calc(max(10px, env(safe-area-inset-top)) + 54px);
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(90vw, 760px);
+  padding: 3px 14px 2px;
+  border-radius: 999px;
+  background: rgba(28, 18, 51, 0.6);
+  font-family: var(--display);
+  font-size: 15px;
+  letter-spacing: 1.5px;
+  color: #ffe9a8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+}
+
+.table-name.show {
+  opacity: 1;
+}
+
+.card .sub.style {
+  font-family: var(--display);
+  font-size: 12px;
+  letter-spacing: 1px;
+  color: #b06bff;
+  margin-top: 1px;
+}
+
+.card .sub.style:empty {
+  display: none;
+}
+
+.over-style {
+  font-family: var(--display);
+  font-size: 26px;
+  letter-spacing: 2px;
+  color: #c77dff;
+  margin: 4px 0;
+}
+
+.btn.ff {
+  position: absolute;
+  right: var(--pad);
+  bottom: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 18px;
+  padding: 8px 16px 6px;
+  touch-action: none;
+  opacity: 0;
+  transform: translateY(24px) scale(0.8);
+  pointer-events: none;
+  transition:
+    opacity 0.2s,
+    transform 0.3s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+
+.btn.ff svg {
+  width: 22px;
+  height: 22px;
+}
+
+.btn.ff.show {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+.btn.ff.on {
+  background: var(--cyan);
+  transform: translateY(3px);
+  box-shadow: 0 2px 0 var(--ink);
+}
+
 /* ------------------------------------------------------------------ undo / redo / reset, grabs */
 
 .edits {

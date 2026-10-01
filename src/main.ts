@@ -8,6 +8,7 @@ import { Autopilot } from './game/demo';
 import { Game } from './game/game';
 import { FREE_RULES } from './game/ruleset';
 import { fullTray } from './game/toys';
+import { loadBest } from './game/rules';
 import { Input } from './input/input';
 import { Camera } from './render/camera';
 import { Renderer } from './render/renderer';
@@ -25,7 +26,17 @@ const toys = params.get('toys') === '1' || (import.meta.env.VITE_TOYS === '1' &&
 const canvas = document.getElementById('world') as HTMLCanvasElement;
 const hudRoot = document.getElementById('hud') as HTMLElement;
 
-const game = new Game({ seed, persist: !demo, rules: FREE_RULES, tray: toys ? fullTray() : undefined });
+// Free Play deals a remixed table every game (?remix=0 for the plain one); a new player's very
+// first game is the plain table.
+const remix = params.get('remix') !== '0';
+const game = new Game({
+  seed,
+  persist: !demo,
+  rules: FREE_RULES,
+  tray: toys ? fullTray() : undefined,
+  remix,
+  remixLevel: loadBest() === null ? 0 : undefined,
+});
 const cam = new Camera();
 const fx = new Fx(createRng(seed ?? randomSeed()).next);
 const sfx = new Sfx();

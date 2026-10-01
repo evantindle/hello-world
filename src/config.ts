@@ -176,6 +176,8 @@ export const RESOLVE_DELAY = 0.55;
 export const RESPAWN_TIME = 1.25;
 export const SLOWMO_SCALE = 0.25;
 export const SLOWMO_MAX = 2.2; // real seconds of slow-mo per game at most per approach
+/** Holding fast-forward runs the sim this many times faster. */
+export const FF_SCALE = 3;
 export const PAR = 20;
 
 // ---------------------------------------------------------------- rack

@@ -12,8 +12,10 @@ export interface Pot {
   gen: number;
   /** Cushions the ball touched before dropping. */
   banks: number;
-  /** Boosters, bumpers and portals it went through. */
+  /** Boosters, bumpers, portals and black holes it went through... */
   via: number;
+  /** ...of which portals and black holes. */
+  warps: number;
 }
 
 /**
@@ -74,6 +76,6 @@ export function logCushion(log: TurnLog, b: Ball): void {
 }
 
 export function logPot(log: TurnLog, b: Ball, pocketVid: number, t: number): void {
-  log.pots.push({ ball: b.num, pocket: pocketVid, t, gen: b.gen, banks: b.banks, via: b.via });
+  log.pots.push({ ball: b.num, pocket: pocketVid, t, gen: b.gen, banks: b.banks, via: b.via, warps: b.warps });
   if (b.kind === 'cue') log.scratch = { pocket: pocketVid };
 }

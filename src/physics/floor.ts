@@ -322,6 +322,7 @@ export function teleports(
       b.vy = 0;
       clearSpinState(b);
       b.via++;
+      b.warps++;
       s.hole[i] = k;
       s.limboT[i] = LIMBO_TIME;
       s.limbo++;
@@ -352,6 +353,7 @@ export function teleports(
       b.x = x;
       b.y = y;
       b.via++;
+      b.warps++;
       s.warpLock[i] = e.to + 1;
       out.push({ type: 'warp', ball: b, src: e.src, link: to.src, fromX: e.x + ox, fromY: e.y + oy, x, y });
       break;

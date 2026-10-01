@@ -111,6 +111,10 @@ export class Director {
     });
 
     ev.on('phase', ({ to }) => {
+      if (to === 'spin' && game.shots === 0 && game.tableName && game.tableName !== 'THE CLASSIC') {
+        // A new remixed table: say what it is.
+        this.after(0.2, () => hud.toast(game.tableName!, 'wow'));
+      }
       if (to === 'spin') {
         this.turn++;
         sfx.spinStart();
@@ -480,6 +484,18 @@ export class Director {
       if (k >= 2) {
         hud.toast(k === 2 ? 'DOUBLE GULP!' : k === 3 ? 'TRIPLE GULP!' : `MEGA GULP ×${k}!`, 'wow');
         sfx.ding(k + 2);
+        this.combo(k);
+      }
+      if (res.style > 0) {
+        const c = game.cue;
+        this.after(0.35, () =>
+          pop(`+${res.style.toLocaleString('en-US')} STYLE`, c.x, c.y - 70, {
+            size: Math.min(46, 26 + k * 4),
+            color: '#d6a8ff',
+            force: true,
+            life: 1.3,
+          }),
+        );
       }
       if (k > 0) {
         const title = STREAKS[Math.min(res.streak, STREAKS.length - 1)] ?? '';
@@ -690,6 +706,29 @@ export class Director {
         if (b) pop('ooooOOOH…', b.x, b.y - 50, { size: 34, color: '#e0c3ff', force: true, life: 1.6 });
       }
     });
+  }
+
+  /**
+   * Bigger combos, bigger parties: three balls throw confetti out of every pocket, four set off
+   * fireworks, five or more crown the player.
+   */
+  private combo(k: number): void {
+    const fx = this.fx;
+    const r = fx.rand;
+    if (k >= 3) {
+      for (const p of this.game.geom.pockets) {
+        if (!p.open) continue;
+        fx.particles.confetti(p.x, p.y, 18, 340, r);
+        fx.particles.stars(p.x, p.y, 3, 220, r);
+      }
+      this.cam.addShake(0.2);
+    }
+    if (k >= 4) fx.fireworks = Math.max(fx.fireworks, 2.2);
+    if (k >= 5) {
+      this.hud.showBanner('TABLE WIZARD!', 'smack');
+      fx.confettiRain = Math.max(fx.confettiRain, 2.5);
+      this.sfx.fanfare();
+    }
   }
 
   private resetCamera(): void {

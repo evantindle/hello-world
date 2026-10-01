@@ -1,14 +1,17 @@
 import { CUE_START, PAR, R, RACK_APEX } from '../config';
 import type { Rng } from '../core/rng';
-import { hyp } from '../core/vec';
+import { hyp, type Vec } from '../core/vec';
 import { THICK } from '../geom/parts';
 import { centroid, distToSegment, pointInPolygon } from '../geom/polygon';
 import type { TableGeom } from '../geom/table';
 import { makeBall, type Ball } from '../physics/world';
 
-/** Cue ball plus ten object balls in a 1-2-3-4 triangle pointing at the cue. */
-export function rackBalls(rng: Rng): Ball[] {
-  const balls: Ball[] = [makeBall({ id: 0, x: CUE_START.x, y: CUE_START.y })];
+/**
+ * Cue ball plus ten object balls in a 1-2-3-4 triangle pointing at the cue (to the left), its
+ * apex at `apex`.
+ */
+export function rackBalls(rng: Rng, apex: Vec = RACK_APEX, cue: Vec = CUE_START): Ball[] {
+  const balls: Ball[] = [makeBall({ id: 0, x: cue.x, y: cue.y })];
   const nums = rng.shuffle([2, 3, 4, 5, 6, 7, 8, 9, 10]);
   nums.unshift(1);
   const pitch = 2 * R + 0.6;
@@ -17,7 +20,7 @@ export function rackBalls(rng: Rng): Ball[] {
   for (let row = 0; row < 4; row++) {
     for (let j = 0; j <= row; j++) {
       const num = nums[k++]!;
-      balls.push(makeBall({ id: num, x: RACK_APEX.x + row * dx, y: RACK_APEX.y + (j - row / 2) * pitch }));
+      balls.push(makeBall({ id: num, x: apex.x + row * dx, y: apex.y + (j - row / 2) * pitch }));
     }
   }
   return balls;
@@ -93,6 +96,18 @@ export function rankFor(score: number, par = PAR): Rank {
 }
 
 const BEST_KEY = 'bendy-billiards.best';
+const STYLE_KEY = 'bendy-billiards.bestStyle';
+
+/** Style points of the best game (its tiebreaker), 0 if none. */
+export function loadBestStyle(): number {
+  try {
+    if (typeof localStorage === 'undefined') return 0;
+    const n = Number(localStorage.getItem(STYLE_KEY) ?? 0);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
 
 export function loadBest(): number | null {
   try {
@@ -105,9 +120,11 @@ export function loadBest(): number | null {
   }
 }
 
-export function saveBest(score: number): void {
+export function saveBest(score: number, style = 0): void {
   try {
-    if (typeof localStorage !== 'undefined') localStorage.setItem(BEST_KEY, String(score));
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(BEST_KEY, String(score));
+    localStorage.setItem(STYLE_KEY, String(style));
   } catch {
     // Storage blocked (private mode, sandboxed iframe): best score just won't persist.
   }

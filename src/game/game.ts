@@ -1,6 +1,7 @@
 import {
   BUDGET,
   CHARGE_TIME,
+  FF_SCALE,
   H,
   MAX_HUNGER,
   PAR,
@@ -48,7 +49,9 @@ import {
   type MoveResult,
   type ReshapeHost,
 } from './reshape';
-import { findRespawnSpot, loadBest, rackBalls, rankFor, saveBest, type Rank } from './rules';
+import { makeRemix } from './remix';
+import { findRespawnSpot, loadBest, loadBestStyle, rackBalls, rankFor, saveBest, type Rank } from './rules';
+import { beats, styleOf } from './scoring';
 import { cloneLog, type Edit, type TurnRecord } from './record';
 import { V1_RULES, type Ruleset } from './ruleset';
 import { hashBoard, snapState } from './serialize';
@@ -60,6 +63,9 @@ export type Phase = 'title' | 'spin' | 'plan' | 'strike' | 'sim' | 'resolve' | '
 export interface TurnResult {
   potted: Ball[];
   scratch: boolean;
+  /** Style points for this shot, and for the game so far. */
+  style: number;
+  totalStyle: number;
   streak: number;
   timedOut: boolean;
   shots: number;
@@ -74,6 +80,8 @@ export interface GameOverInfo {
   par: number;
   best: number | null;
   isBest: boolean;
+  style: number;
+  bestStyle: number;
   rank: Rank;
   bestStreak: number;
 }
@@ -151,6 +159,10 @@ export interface GameOptions {
   rules?: Ruleset;
   /** Toys the player can put down. */
   tray?: TrayItem[];
+  /** Deal a remixed table every game (Free Play). */
+  remix?: boolean;
+  /** Twists on the first remix (0: the plain table, for a new player's first game). */
+  remixLevel?: number;
 }
 
 /** Everything a new game needs: its rules and seed, and optionally a starting table and balls. */
@@ -164,6 +176,10 @@ export interface GameSetup {
   /** Toys the player can put down (cloned); default none. */
   tray?: TrayItem[];
   levelId?: string;
+  /** Deal a fresh remixed table from the seed (table, balls and tray, unless given). */
+  remix?: boolean;
+  /** How many twists the remix deals (default 2). */
+  remixLevel?: number;
 }
 
 export class Game implements ReshapeHost {
@@ -209,6 +225,14 @@ export class Game implements ReshapeHost {
   streak = 0;
   bestStreak = 0;
   best: number | null = null;
+  /** Style points of the best game (its tiebreaker). */
+  bestStyle = 0;
+  /** The table's name (remixes and levels), or null. */
+  tableName: string | null = null;
+  /** Style points this game. */
+  style = 0;
+  /** Fast-forward held: the sim runs FF_SCALE times faster (and skips the slow-mo). */
+  ff = false;
   /** Balls pocketed during the current shot. */
   potted: Ball[] = [];
   scratched = false;
@@ -250,8 +274,17 @@ export class Game implements ReshapeHost {
 
   constructor(opts: GameOptions = {}) {
     this.persist = opts.persist ?? false;
-    if (this.persist) this.best = loadBest();
-    this.setup({ rules: opts.rules ?? V1_RULES, seed: opts.seed ?? randomSeed(), tray: opts.tray });
+    if (this.persist) {
+      this.best = loadBest();
+      this.bestStyle = this.best === null ? 0 : loadBestStyle();
+    }
+    this.setup({
+      rules: opts.rules ?? V1_RULES,
+      seed: opts.seed ?? randomSeed(),
+      tray: opts.tray,
+      remix: opts.remix,
+      remixLevel: opts.remixLevel,
+    });
     this.world = createWorld(this.balls, this.geom);
   }
 
@@ -336,16 +369,23 @@ export class Game implements ReshapeHost {
     if (this.partDrag) this.endPartDrag();
     if (this.charging) this.cancelShot();
     if (this.slowmo) this.setSlowmo(false);
-    this.lastSetup = s;
+    // A first-game remix level applies once; new games deal the usual twists.
+    this.lastSetup = { ...s, remixLevel: undefined };
     this.history = [];
     this.pending = null;
     this.rules = s.rules;
     this.levelId = s.levelId ?? null;
     this.seed = s.seed >>> 0;
-    this.table = s.table ? cloneTable(s.table) : createTable();
+    const rx = s.remix ? makeRemix(this.seed, s.remixLevel ?? 2) : null;
+    this.tableName = rx ? rx.name : null;
+    this.table = s.table ? cloneTable(s.table) : rx ? rx.table : createTable();
     this.hunger = 0;
     this.geom = buildGeom(this.table, this.hunger);
-    this.balls = s.balls ? s.balls.map((b) => ({ ...b })) : rackBalls(rngFor(this.seed, 'rack'));
+    this.balls = s.balls
+      ? s.balls.map((b) => ({ ...b }))
+      : rx
+        ? rx.balls
+        : rackBalls(rngFor(this.seed, 'rack'));
     this.world = createWorld(this.balls, this.geom);
     const lim = this.rules.reshape;
     this.budget = lim.kind === 'budget' ? lim.perTurn : Infinity;
@@ -354,6 +394,7 @@ export class Game implements ReshapeHost {
     this.penalties = 0;
     this.streak = 0;
     this.bestStreak = 0;
+    this.style = 0;
     this.potted = [];
     this.scratched = false;
     this.respawn = null;
@@ -364,7 +405,7 @@ export class Game implements ReshapeHost {
     this.chargeT = 0;
     this.drag = null;
     this.partDrag = null;
-    this.tray = structuredClone(s.tray ?? []);
+    this.tray = structuredClone(s.tray ?? rx?.tray ?? []);
     this.fresh.clear();
     this.editHistory.clear();
     this.edits = [];
@@ -436,7 +477,12 @@ export class Game implements ReshapeHost {
         this.timedOut = false;
         const cue = this.cue;
         const eng = this.rules.english;
-        this.shot = quantizeShot(this.aim, this.strikePower, eng ? this.englishX : 0, eng ? this.englishY : 0);
+        this.shot = quantizeShot(
+          this.aim,
+          this.strikePower,
+          eng ? this.englishX : 0,
+          eng ? this.englishY : 0,
+        );
         this.pending = {
           stroke: this.shots,
           aim: this.aim,
@@ -472,8 +518,9 @@ export class Game implements ReshapeHost {
 
   /** Advance by one frame of real time. */
   update(dtReal: number): void {
-    const target = this.slowmo ? SLOWMO_SCALE : 1;
-    this.timeScale = damp(this.timeScale, target, this.slowmo ? 16 : 6, dtReal);
+    const fast = this.ff && this.phase === 'sim';
+    const target = this.slowmo ? SLOWMO_SCALE : fast ? FF_SCALE : 1;
+    this.timeScale = damp(this.timeScale, target, this.slowmo || fast ? 16 : 6, dtReal);
     if (Math.abs(this.timeScale - target) < 0.003) this.timeScale = target;
     const dt = dtReal * this.timeScale;
 
@@ -628,7 +675,8 @@ export class Game implements ReshapeHost {
    */
   private updateSlowmo(dtReal: number): void {
     let want = false;
-    if (this.slowmoLeft > 0 && this.objectsLeft === 1) {
+    // No bullet time while the player is fast-forwarding.
+    if (this.slowmoLeft > 0 && this.objectsLeft === 1 && !this.ff) {
       const b = this.balls.find((o) => o.kind === 'object' && o.active)!;
       const sp = hyp(b.vx, b.vy);
       if (sp > 25) {
@@ -667,6 +715,8 @@ export class Game implements ReshapeHost {
     }
     if (this.scratched) this.penalties++;
     const log = this.world.log;
+    const style = styleOf(log);
+    this.style = Math.max(0, this.style + style);
     // A broken egg costs a stroke in Free Play (Classic levels judge eggs through their goals).
     if (this.rules.mode === 'free') this.penalties += log.broken.length;
     let rebuild = false;
@@ -704,6 +754,8 @@ export class Game implements ReshapeHost {
     this.events.emit('turnResult', {
       potted,
       scratch: this.scratched,
+      style,
+      totalStyle: this.style,
       streak: this.streak,
       timedOut: this.timedOut,
       shots: this.shots,
@@ -720,10 +772,15 @@ export class Game implements ReshapeHost {
 
   private finish(): void {
     const score = this.score;
-    const isBest = this.best === null || score < this.best;
+    const isBest = beats(
+      score,
+      this.style,
+      this.best === null ? null : { score: this.best, style: this.bestStyle },
+    );
     if (isBest) {
       this.best = score;
-      if (this.persist) saveBest(score);
+      this.bestStyle = this.style;
+      if (this.persist) saveBest(score, this.style);
     }
     const info: GameOverInfo = {
       score,
@@ -732,6 +789,8 @@ export class Game implements ReshapeHost {
       par: this.par,
       best: this.best,
       isBest,
+      style: this.style,
+      bestStyle: this.bestStyle,
       rank: rankFor(score, this.par),
       bestStreak: this.bestStreak,
     };
@@ -890,11 +949,13 @@ export class Game implements ReshapeHost {
     switch (e.op) {
       case 'grab': {
         let h: Handle | undefined;
-        if (e.edge !== undefined) h = listHandles(this.table).find((q) => q.kind === 'edge' && q.index === e.edge);
+        if (e.edge !== undefined)
+          h = listHandles(this.table).find((q) => q.kind === 'edge' && q.index === e.edge);
         else {
           const i = this.table.verts.findIndex((v) => v.id === e.vid);
           const v = this.table.verts[i];
-          if (v) h = { kind: 'vertex', index: i, x: v.x, y: v.y, pocket: v.pocket, locked: v.bolted === true };
+          if (v)
+            h = { kind: 'vertex', index: i, x: v.x, y: v.y, pocket: v.pocket, locked: v.bolted === true };
         }
         if (!h || !this.beginDrag(h, e.path[0]!, e.path[1]!)) return false;
         for (let i = 2; i + 1 < e.path.length; i += 2) this.dragTo(e.path[i]!, e.path[i + 1]!);
@@ -963,7 +1024,12 @@ export class Game implements ReshapeHost {
     if (!s) return false;
     this.drag = s;
     this.editBefore = before;
-    this.curEdit = { op: 'grab', vid: s.vid, ...(h.kind === 'edge' ? { edge: h.index } : {}), path: [px, py] };
+    this.curEdit = {
+      op: 'grab',
+      vid: s.vid,
+      ...(h.kind === 'edge' ? { edge: h.index } : {}),
+      path: [px, py],
+    };
     this.events.emit('dragStart', { vid: s.vid, inserted: s.inserted, x: px, y: py });
     return true;
   }
@@ -1030,7 +1096,12 @@ export class Game implements ReshapeHost {
     return this.table.parts.filter((p) => canTurn(p)).map((p) => p.id);
   }
 
-  hitPart(x: number, y: number, radius: number, knobs: readonly number[] = this.turnable()): PartHandle | null {
+  hitPart(
+    x: number,
+    y: number,
+    radius: number,
+    knobs: readonly number[] = this.turnable(),
+  ): PartHandle | null {
     return this.canReshape ? hitPart(this.table, x, y, radius, knobs) : null;
   }
 
@@ -1048,7 +1119,17 @@ export class Game implements ReshapeHost {
     const free = this.fresh.has(id) || this.rules.reshape.kind === 'free';
     if (!free && this.outOfTokens(p.x, p.y, null)) return false;
     this.editBefore = this.snapEdit();
-    this.partDrag = { id, turn, gx: p.x - px, gy: p.y - py, ax: p.x, ay: p.y, moved: 0, free, lastBlocked: null };
+    this.partDrag = {
+      id,
+      turn,
+      gx: p.x - px,
+      gy: p.y - py,
+      ax: p.x,
+      ay: p.y,
+      moved: 0,
+      free,
+      lastBlocked: null,
+    };
     this.curEdit = turn ? { op: 'turn', id, ks: [] } : { op: 'move', id, path: [px, py] };
     this.events.emit('partGrab', { id, turn, x: p.x, y: p.y });
     return true;
@@ -1157,7 +1238,12 @@ export class Game implements ReshapeHost {
     const p = this.table.parts.find((q) => q.id === s.id);
     if (!p) return;
     let stowed = false;
-    if (stow && p.placed !== undefined && this.tray[p.placed] && (s.free || !this.tokenMode || this.tokens >= 1)) {
+    if (
+      stow &&
+      p.placed !== undefined &&
+      this.tray[p.placed] &&
+      (s.free || !this.tokenMode || this.tokens >= 1)
+    ) {
       const item = this.tray[p.placed]!;
       for (const id of removeParts(this, s.id)) this.fresh.delete(id);
       item.count++;
@@ -1199,7 +1285,12 @@ export class Game implements ReshapeHost {
   canPlace(item: number, x: number, y: number): boolean {
     const preset = this.presetFor(item);
     if (!preset || !this.canReshape || !pointInPolygon(x, y, this.geom.poly)) return false;
-    const host = { table: cloneTable(this.table), geom: this.geom, balls: this.balls.map((b) => ({ ...b })), hunger: this.hunger };
+    const host = {
+      table: cloneTable(this.table),
+      geom: this.geom,
+      balls: this.balls.map((b) => ({ ...b })),
+      hunger: this.hunger,
+    };
     return placePart(host, preset, q64(x), q64(y)).ids.length > 0;
   }
 

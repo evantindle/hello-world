@@ -25,6 +25,8 @@ export interface GameState {
   tray: TrayItem[];
   streak: number;
   bestStreak: number;
+  /** Style points so far this game. */
+  style: number;
 }
 
 /** What serialize needs from a game (the Game class satisfies it). */
@@ -43,6 +45,7 @@ export interface StateHost {
   tray: TrayItem[];
   streak: number;
   bestStreak: number;
+  style: number;
 }
 
 const finiteOrNull = (n: number): number | null => (Number.isFinite(n) ? n : null);
@@ -63,6 +66,7 @@ export function snapState(g: StateHost): GameState {
     tray: structuredClone(g.tray),
     streak: g.streak,
     bestStreak: g.bestStreak,
+    style: g.style,
   };
 }
 
@@ -86,6 +90,7 @@ export function restoreState(g: StateHost, s: GameState): void {
   g.tray = structuredClone(s.tray ?? []);
   g.streak = s.streak;
   g.bestStreak = s.bestStreak;
+  g.style = s.style ?? 0;
 }
 
 /** FNV-1a over raw float64 bytes: equal only if every position agrees to the last bit. */

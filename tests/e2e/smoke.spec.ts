@@ -22,7 +22,7 @@ async function boot(page: Page, query: string, errors: string[]) {
 
 test('a full turn: spin, bend, smack, settle', async ({ page }) => {
   const errors: string[] = [];
-  await boot(page, '?seed=42&mute=1', errors);
+  await boot(page, '?seed=42&mute=1&remix=0', errors);
   await expect(page.getByRole('button', { name: 'PLAY!' })).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/01-title.png` });
 
@@ -72,7 +72,7 @@ test('real pointer input: drag a knob, turn the dial, put on English, press SMAC
   const errors: string[] = [];
   // Reduced motion stops the bouncing PLAY button (and exercises that CSS path).
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  await boot(page, '?seed=9&mute=1', errors);
+  await boot(page, '?seed=9&mute=1&remix=0', errors);
   await page.getByRole('button', { name: 'PLAY!' }).click();
   await page.waitForFunction(() => window.__bendy.phase() === 'spin');
   // Tap the table to skip the spin.
@@ -140,7 +140,7 @@ test('phone portrait rotates the table and still plays', async ({ browser }) => 
     isMobile: true,
   });
   const errors: string[] = [];
-  await boot(page, '?seed=11&mute=1', errors);
+  await boot(page, '?seed=11&mute=1&remix=0', errors);
   await page.evaluate(() => {
     window.__bendy.manual(true);
     window.__bendy.start();
@@ -155,7 +155,7 @@ test('phone portrait rotates the table and still plays', async ({ browser }) => 
 
 test('toy tray: drag a wall onto the table with a real pointer, then undo it', async ({ page }) => {
   const errors: string[] = [];
-  await boot(page, '?seed=3&mute=1&toys=1', errors);
+  await boot(page, '?seed=3&mute=1&toys=1&remix=0', errors);
   await page.evaluate(() => {
     window.__bendy.start();
     window.__bendy.skipSpin();
