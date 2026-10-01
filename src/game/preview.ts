@@ -1,14 +1,15 @@
-import { H } from '../config';
+import { H, R } from '../config';
 import { subSeed } from '../core/rng';
 import type { TableGeom } from '../geom/table';
 import { launchFrom, type ShotQ } from '../physics/launch';
 import { createWorld, stepWorld, type Ball, type PhysEvent, type World } from '../physics/world';
 
 /**
- * The chain preview: the next shot, played out ahead of time with the real physics on copies of
- * the balls, so a player can see where everything would go (Free Play and the Toy Box). It runs a
- * few milliseconds per frame and keeps the last few results, so turning the dial back and forth or
- * undoing an edit shows the answer at once.
+ * The shot preview: the next shot, played out ahead of time with the real physics on copies of
+ * the balls (Free Play and the Toy Box). It shows just enough to plan with: the cue ball's path to
+ * its first hit and a little beyond, and where each ball it hits heads off to (and whether it
+ * drops). It stops simulating as soon as that much is known, so it usually finishes within the
+ * frame the shot changed in, and keeps the last few results for instant answers.
  */
 
 /**
@@ -30,43 +31,46 @@ export function startShot(
   return { world, ...launch };
 }
 
-/** Seconds of the shot the preview shows: the whole first act, or less while something is dragged. */
+/** Never look further ahead than this (seconds of the shot). */
 export const PREVIEW_T = 1.5;
-export const PREVIEW_T_DRAG = 0.8;
+/** How far the cue ball's path goes after its first hit, and before any hit at all. */
+export const CUE_AFTER = 170;
+export const CUE_FREE = 1500;
+/** How far the path of each ball the cue ball hits goes. */
+export const HIT_LEN = 520;
 /** Path points are kept this far apart. */
 const STEP_DIST = 4;
-/** Deepest collision generation that gets a path (the cue ball is 0, a ball it hits is 1...). */
-export const PREVIEW_GEN = 3;
 const CACHE = 4;
 
 export interface PreviewTrack {
   id: number;
   num: number;
   color: string;
-  /** Collision generation: 0 for the cue ball, k+1 for a ball hit by generation k, 255 if only a
-   * toy moved it. */
+  /** 0 for the cue ball, 1 for a ball it hit (other balls only show up in exhaustive previews). */
   gen: number;
   /** Polylines as flat x, y lists (a portal hop or a black hole starts a new one). */
   segs: number[][];
-  /** Where the ball is when the preview stops (where it rests, or the hole it dropped into). */
+  /** Index of the first polyline after the cue ball's first hit (segs.length if none). */
+  after: number;
+  /** Where the path ends (where the ball rests, the hole it dropped into, or where the view stops). */
   end: { x: number; y: number };
   /** Pocket vertex id it dropped into, if it did. */
   drop: number | null;
-  /** Still rolling when the preview stops. */
+  /** The path was cut short with the ball still rolling. */
   moving: boolean;
 }
 
 export interface Preview {
   key: string;
   tracks: PreviewTrack[];
-  /** Ball-on-ball contacts (the generation of the deeper ball). */
-  contacts: { x: number; y: number; gen: number }[];
-  /** Object balls that would drop, by pocket vertex id. */
-  drops: { num: number; pocket: number }[];
-  /** The cue ball would drop. */
+  /** Where the cue ball is when it first touches a ball (the ghost ball), if it does. */
+  contact: { x: number; y: number } | null;
+  /** Object balls that would drop (while the preview was watching), with their generation. */
+  drops: { num: number; pocket: number; gen: number }[];
+  /** The cue ball would drop (along its shown path). */
   scratch: boolean;
-  /** Seconds of the shot covered. */
-  horizon: number;
+  /** Seconds of the shot simulated. */
+  span: number;
   done: boolean;
 }
 
@@ -79,18 +83,31 @@ export interface PreviewInput {
   /** The stroke number the shot will have (the world's random stream is seeded with it). */
   stroke: number;
   shot: ShotQ;
+  /** Seconds to look ahead at most. */
   horizon: number;
+  /** Follow every ball to the end of the horizon, with no limits (tests and tools). */
+  exhaustive?: boolean;
+}
+
+/** One ball being followed. */
+interface Rec {
+  track: PreviewTrack;
+  /** The polyline being added to (null between a black hole and its exit). */
+  seg: number[] | null;
+  /** Path length so far, and how long it may get. */
+  len: number;
+  limit: number;
+  done: boolean;
 }
 
 interface Job {
   preview: Preview;
   world: World;
   balls: Ball[];
-  /** Where each ball was when the shot began. */
   starts: { x: number; y: number }[];
-  tracks: (PreviewTrack | null)[];
-  /** Per ball: an open polyline to add points to. */
-  open: (number[] | null)[];
+  recs: (Rec | null)[];
+  exhaustive: boolean;
+  horizon: number;
   events: PhysEvent[];
 }
 
@@ -100,21 +117,21 @@ export class Previewer {
   private job: Job | null = null;
   /** The preview to show: the finished one for the current shot, or the last one while a new one runs. */
   current: Preview | null = null;
-  /** Timing, for the performance budget: milliseconds spent on the last finished preview. */
+  /** Milliseconds spent on the last finished preview. */
   lastCostMs = 0;
   private cost = 0;
 
-  /** The shot the preview is being worked out for (null when idle). */
+  /** The shot a preview is being worked out for (null when idle). */
   get pendingKey(): string | null {
     return this.job?.preview.key ?? null;
   }
 
   /**
-   * Works on the preview for `input` (built only when needed) for at most `budgetMs`. Returns what
-   * to show.
+   * Works on the preview for the shot `key` (built only when needed) for at most `budgetMs`.
+   * Returns what to show.
    */
   update(key: string, make: () => PreviewInput, budgetMs: number): Preview | null {
-    if (this.current?.key !== key || !this.current.done) {
+    if (this.current?.key !== key) {
       const hit = this.cache.find((p) => p.key === key);
       if (hit) {
         this.touch(hit);
@@ -158,123 +175,193 @@ export class Previewer {
 
   private begin(input: PreviewInput): Job {
     const balls = input.balls.map((b) => ({ ...b }));
+    const starts = balls.map((b) => ({ x: b.x, y: b.y }));
     const { world } = startShot(balls, input.geom, input.seed, input.stroke, input.shot);
     const preview: Preview = {
       key: input.key,
       tracks: [],
-      contacts: [],
+      contact: null,
       drops: [],
       scratch: false,
-      horizon: input.horizon,
+      span: 0,
       done: false,
     };
-    return {
+    const job: Job = {
       preview,
       world,
       balls,
-      starts: balls.map((b) => ({ x: b.x, y: b.y })),
-      tracks: balls.map(() => null),
-      open: balls.map(() => null),
+      starts,
+      recs: balls.map(() => null),
+      exhaustive: input.exhaustive === true,
+      horizon: input.horizon,
       events: [],
     };
+    const cue = balls.findIndex((b) => b.kind === 'cue');
+    if (cue >= 0) this.follow(job, cue, job.exhaustive ? Infinity : CUE_FREE);
+    return job;
+  }
+
+  /** Start following ball i from where it is (or where it started, if it has not moved yet). */
+  private follow(job: Job, i: number, limit: number): Rec {
+    const b = job.balls[i]!;
+    const s = job.starts[i]!;
+    // A ball just set moving (by a hit this step) has its path begin where it was resting.
+    const near = Math.abs(b.x - s.x) + Math.abs(b.y - s.y) < 2 * R;
+    const track: PreviewTrack = {
+      id: b.id,
+      num: b.num,
+      color: b.color,
+      gen: b.kind === 'cue' ? 0 : 1,
+      segs: [],
+      after: Infinity,
+      end: { x: b.x, y: b.y },
+      drop: null,
+      moving: false,
+    };
+    const seg = near ? [s.x, s.y] : [b.x, b.y];
+    track.segs.push(seg);
+    const rec: Rec = { track, seg, len: 0, limit, done: false };
+    job.recs[i] = rec;
+    return rec;
   }
 
   private run(job: Job, more: () => boolean): void {
     const { world, balls, preview } = job;
-    // Check the clock every few steps (a step is far cheaper than a clock read on some machines).
     while (!preview.done) {
+      // Check the clock every few steps (a step is cheaper than reading the clock on some machines).
       for (let k = 0; k < 4 && !preview.done; k++) {
         job.events.length = 0;
         stepWorld(world, H, job.events);
         for (const e of job.events) this.note(job, e);
-        balls.forEach((b, i) => {
-          if (b.active) this.record(job, b, i);
-        });
-        if (world.stopped || world.t >= preview.horizon - 1e-9) preview.done = true;
+        for (let i = 0; i < balls.length; i++) {
+          const b = balls[i]!;
+          if (
+            job.exhaustive &&
+            !job.recs[i] &&
+            b.active &&
+            (b.x !== job.starts[i]!.x || b.y !== job.starts[i]!.y)
+          ) {
+            this.follow(job, i, Infinity).track.gen = b.gen;
+          }
+          const rec = job.recs[i];
+          if (rec && !rec.done && b.active) this.record(rec, b, job.exhaustive);
+        }
+        preview.span = world.t;
+        if (world.stopped || world.t >= job.horizon - 1e-9 || this.seenEnough(job)) preview.done = true;
       }
       if (!more()) break;
     }
   }
 
-  private trackFor(job: Job, b: Ball, i: number): PreviewTrack {
-    let tr = job.tracks[i];
-    if (!tr) {
-      tr = {
-        id: b.id,
-        num: b.num,
-        color: b.color,
-        gen: b.gen,
-        segs: [],
-        end: { x: b.x, y: b.y },
-        drop: null,
-        moving: true,
-      };
-      job.tracks[i] = tr;
-    }
-    return tr;
+  /** Everything the preview shows is settled: the cue ball's path is done, and so is each hit ball's. */
+  private seenEnough(job: Job): boolean {
+    if (job.exhaustive) return false;
+    for (const rec of job.recs) if (rec && !rec.done) return false;
+    return true;
   }
 
-  /** Adds the ball's position to its path once it has moved far enough. */
-  private record(job: Job, b: Ball, i: number): void {
-    let seg = job.open[i];
-    if (!seg) {
-      // A ball that has not moved has no path yet; one that just started begins where it was. (A
-      // path that ended, in a black hole, picks up again when the ball comes back out.)
-      if (job.tracks[i]) return;
-      const s = job.starts[i]!;
-      if (b.x === s.x && b.y === s.y) return;
-      seg = [s.x, s.y];
-      job.open[i] = seg;
-      this.trackFor(job, b, i).segs.push(seg);
-    }
+  /**
+   * Adds the ball's position to its path once it has moved far enough, up to the path's limit. In
+   * the focused view a ball that comes to rest ends its path there (being knocked on later is
+   * more than the view shows); an exhaustive preview keeps following it.
+   */
+  private record(rec: Rec, b: Ball, exhaustive: boolean): void {
+    const seg = rec.seg;
+    if (!seg) return;
     const lx = seg[seg.length - 2]!;
     const ly = seg[seg.length - 1]!;
     const dx = b.x - lx;
     const dy = b.y - ly;
-    if (dx * dx + dy * dy >= STEP_DIST * STEP_DIST) seg.push(b.x, b.y);
+    const d2 = dx * dx + dy * dy;
+    if (d2 < STEP_DIST * STEP_DIST) {
+      // At rest within the view: the path ends here.
+      if (!exhaustive && b.vx === 0 && b.vy === 0) {
+        if (d2 > 0) seg.push(b.x, b.y);
+        rec.done = true;
+        rec.track.end = { x: b.x, y: b.y };
+      }
+      return;
+    }
+    const d = Math.sqrt(d2);
+    if (rec.len + d >= rec.limit) {
+      const f = (rec.limit - rec.len) / d;
+      const x = lx + dx * f;
+      const y = ly + dy * f;
+      seg.push(x, y);
+      rec.len = rec.limit;
+      rec.done = true;
+      rec.track.moving = true;
+      rec.track.end = { x, y };
+      return;
+    }
+    seg.push(b.x, b.y);
+    rec.len += d;
   }
 
   private note(job: Job, e: PhysEvent): void {
     const idx = (b: Ball) => job.balls.indexOf(b);
     switch (e.type) {
       case 'ballHit': {
-        const gen = Math.max(e.a.gen === 255 ? 0 : e.a.gen, e.b.gen === 255 ? 0 : e.b.gen);
-        if (gen <= PREVIEW_GEN) job.preview.contacts.push({ x: e.x, y: e.y, gen });
+        const cueA = e.a.kind === 'cue';
+        const cueB = e.b.kind === 'cue';
+        if (!cueA && !cueB) break;
+        const ci = idx(cueA ? e.a : e.b);
+        const cue = job.recs[ci];
+        // Only hits the cue ball makes while it is still being watched count.
+        if (!cue || cue.done) break;
+        const other = cueA ? e.b : e.a;
+        const oi = idx(other);
+        if (!job.recs[oi] && other.kind === 'object')
+          this.follow(job, oi, job.exhaustive ? Infinity : HIT_LEN);
+        if (!job.preview.contact) {
+          // The first hit: mark where the cue ball is, and give its path a short tail from here.
+          const s = cueA ? 1 : -1;
+          const x = e.x - s * e.nx * R;
+          const y = e.y - s * e.ny * R;
+          job.preview.contact = { x, y };
+          if (cue.seg) cue.seg.push(x, y);
+          const tail = [x, y];
+          cue.seg = tail;
+          cue.track.after = cue.track.segs.length;
+          cue.track.segs.push(tail);
+          if (!job.exhaustive) cue.limit = cue.len + CUE_AFTER;
+        }
         break;
       }
       case 'pocketed': {
         const i = idx(e.ball);
-        const tr = this.trackFor(job, e.ball, i);
-        const seg = job.open[i];
-        if (seg) seg.push(e.pocket.x, e.pocket.y);
-        job.open[i] = null;
-        tr.drop = e.pocket.vid;
-        tr.end = { x: e.pocket.x, y: e.pocket.y };
-        if (e.ball.kind === 'cue') job.preview.scratch = true;
-        else job.preview.drops.push({ num: e.ball.num, pocket: e.pocket.vid });
+        const rec = job.recs[i];
+        if (rec && !rec.done) {
+          if (rec.seg) rec.seg.push(e.pocket.x, e.pocket.y);
+          rec.done = true;
+          rec.track.drop = e.pocket.vid;
+          rec.track.end = { x: e.pocket.x, y: e.pocket.y };
+          if (e.ball.kind === 'cue') job.preview.scratch = true;
+        }
+        if (e.ball.kind === 'object')
+          job.preview.drops.push({ num: e.ball.num, pocket: e.pocket.vid, gen: e.ball.gen });
         break;
       }
       case 'warp': {
-        const i = idx(e.ball);
-        const seg = job.open[i];
-        if (seg) seg.push(e.fromX, e.fromY);
-        const next = [e.x, e.y];
-        job.open[i] = next;
-        this.trackFor(job, e.ball, i).segs.push(next);
+        const rec = job.recs[idx(e.ball)];
+        if (!rec || rec.done) break;
+        if (rec.seg) rec.seg.push(e.fromX, e.fromY);
+        rec.seg = [e.x, e.y];
+        rec.track.segs.push(rec.seg);
         break;
       }
       case 'swallowed': {
-        const i = idx(e.ball);
-        const seg = job.open[i];
-        if (seg) seg.push(e.x, e.y);
-        job.open[i] = null;
+        const rec = job.recs[idx(e.ball)];
+        if (!rec || rec.done) break;
+        if (rec.seg) rec.seg.push(e.x, e.y);
+        rec.seg = null;
         break;
       }
       case 'bloop': {
-        const i = idx(e.ball);
-        const next = [e.x, e.y];
-        job.open[i] = next;
-        this.trackFor(job, e.ball, i).segs.push(next);
+        const rec = job.recs[idx(e.ball)];
+        if (!rec || rec.done) break;
+        rec.seg = [e.x, e.y];
+        rec.track.segs.push(rec.seg);
         break;
       }
       default:
@@ -285,17 +372,27 @@ export class Previewer {
   private finish(job: Job): void {
     const { preview, balls, world } = job;
     preview.done = true;
-    job.tracks.forEach((tr, i) => {
-      if (!tr) return;
+    job.recs.forEach((rec, i) => {
+      if (!rec) return;
+      const tr = rec.track;
       const b = balls[i]!;
-      tr.gen = b.gen;
-      if (tr.drop === null) {
+      if ((!rec.done || job.exhaustive) && tr.drop === null) {
+        // The view ran out (horizon, or the shot ended) before the path's own limit.
+        if (rec.seg && (rec.seg[rec.seg.length - 2] !== b.x || rec.seg[rec.seg.length - 1] !== b.y))
+          rec.seg.push(b.x, b.y);
         tr.end = { x: b.x, y: b.y };
         tr.moving = b.active && !world.stopped && (b.vx !== 0 || b.vy !== 0);
-        const seg = job.open[i];
-        if (seg && (seg[seg.length - 2] !== b.x || seg[seg.length - 1] !== b.y)) seg.push(b.x, b.y);
-      } else tr.moving = false;
-      tr.segs = tr.segs.filter((s) => s.length >= 4);
+      }
+      if (job.exhaustive) tr.gen = b.gen;
+      // Drop empty polylines, keeping `after` pointing at the same place.
+      const kept: number[][] = [];
+      let after = Infinity;
+      tr.segs.forEach((seg, k) => {
+        if (k === tr.after) after = kept.length;
+        if (seg.length >= 4) kept.push(seg);
+      });
+      tr.segs = kept;
+      tr.after = Math.min(after, kept.length);
       if (tr.segs.length > 0 || tr.drop !== null) preview.tracks.push(tr);
     });
     this.current = preview;

@@ -22,7 +22,7 @@ import { castGuide, type Guide, type GuideSpin } from '../geom/raycast';
 import { buildGeom, cloneTable, createTable, type Pocket, type Table, type TableGeom } from '../geom/table';
 import { launchFrom } from '../physics/launch';
 import { createWorld, stepWorld, type Ball, type PhysEvent, type World } from '../physics/world';
-import { Previewer, PREVIEW_T, PREVIEW_T_DRAG, startShot, type Preview } from './preview';
+import { Previewer, PREVIEW_T, startShot, type Preview } from './preview';
 import { History, type EditSnap } from './history';
 import {
   canTurn,
@@ -255,12 +255,8 @@ export class Game implements ReshapeHost {
   readonly editHistory = new History();
   /** This turn's edits so far, as replayable data (recorded with the stroke). */
   edits: Edit[] = [];
-  /** The chain preview of the shot to come (rules with preview 'chain'). */
+  /** The shot preview (rules with preview 'chain'). */
   readonly previewer = new Previewer();
-  /** Real seconds in the plan phase, and when the last preview was started (to pace them while
-   * something is being dragged). */
-  private previewClock = 0;
-  private previewStarted = -1;
   lastOver: GameOverInfo | null = null;
   /** The state just before the edit in progress, and the edit being recorded. */
   private editBefore: EditSnap | null = null;
@@ -600,19 +596,11 @@ export class Game implements ReshapeHost {
   }
 
   private updatePreview(dtReal: number): void {
-    this.previewClock += dtReal;
-    const dragging = this.drag !== null || this.partDrag !== null;
-    const horizon = dragging ? PREVIEW_T_DRAG : PREVIEW_T;
-    const key = this.previewKey(horizon);
-    // While something is being dragged the shot changes every frame: start a fresh preview at most
-    // every 50 ms (the last one stays up meanwhile).
-    const stale = this.previewer.current?.key !== key && this.previewer.pendingKey !== key;
-    if (stale && dragging && this.previewClock - this.previewStarted < 0.05) return;
-    const before = this.previewer.pendingKey;
-    // A smaller slice of each frame when frames are already slow.
-    const budget = dtReal > 1 / 50 ? 1.5 : 3;
-    this.previewer.update(key, () => this.previewInput(key, horizon), budget);
-    if (this.previewer.pendingKey !== before) this.previewStarted = this.previewClock;
+    const key = this.previewKey(PREVIEW_T);
+    // Most previews finish well inside this; a big break may take a few frames. Less of each
+    // frame when frames are already slow.
+    const budget = dtReal > 1 / 50 ? 2.5 : 6;
+    this.previewer.update(key, () => this.previewInput(key, PREVIEW_T), budget);
   }
 
   private previewInput(key: string, horizon: number) {
@@ -628,9 +616,10 @@ export class Game implements ReshapeHost {
     };
   }
 
-  /** The whole preview of the shot to come, worked out now (tests, tools). */
-  previewNow(horizon = PREVIEW_T): Preview {
-    return this.previewer.compute(this.previewInput(this.previewKey(horizon), horizon));
+  /** The whole preview of the shot to come, worked out now (tests, tools). `exhaustive` follows
+   * every ball to the end of the horizon. */
+  previewNow(horizon = PREVIEW_T, exhaustive = false): Preview {
+    return this.previewer.compute({ ...this.previewInput(this.previewKey(horizon), horizon), exhaustive });
   }
 
   private updateSim(dt: number, dtReal: number): void {

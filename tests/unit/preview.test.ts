@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Game } from '../../src/game/game';
-import { PREVIEW_T, Previewer } from '../../src/game/preview';
+import { CUE_AFTER, HIT_LEN, PREVIEW_T, Previewer } from '../../src/game/preview';
 import { FREE_RULES, V1_RULES } from '../../src/game/ruleset';
 import { quantizeShot } from '../../src/game/shot';
 import { buildGeom, createTable } from '../../src/geom/table';
@@ -31,7 +31,7 @@ describe('chain preview', () => {
       g.setDial(0.85);
       g.setEnglish(0.3, -0.4);
       const before = g.balls.map((b) => [b.x, b.y, b.vx, b.vy]);
-      const p = g.previewNow(60);
+      const p = g.previewNow(60, true);
       // Working it out did not touch the real balls.
       expect(g.balls.map((b) => [b.x, b.y, b.vx, b.vy])).toEqual(before);
       expect(p.done).toBe(true);
@@ -47,20 +47,39 @@ describe('chain preview', () => {
     }
   });
 
-  it('shows the first moments: the cue ball, the balls it hits, the contacts', () => {
-    const g = planning(5);
-    g.setDial(1);
-    const p = g.previewNow();
-    expect(p.horizon).toBe(PREVIEW_T);
-    const cue = p.tracks.find((t) => t.num === 0)!;
-    expect(cue.gen).toBe(0);
-    expect(cue.segs[0]!.slice(0, 2)).toEqual([g.cue.x, g.cue.y]);
-    // Points are kept a few units apart.
-    const s = cue.segs[0]!;
-    for (let i = 2; i + 3 < s.length; i += 2) {
-      expect(Math.hypot(s[i + 2]! - s[i]!, s[i + 3]! - s[i + 1]!)).toBeGreaterThanOrEqual(4 - 1e-9);
+  it('shows only what helps: the cue ball to its first hit and a little beyond, and the balls it hits', () => {
+    const pathLen = (segs: number[][]) => {
+      let l = 0;
+      for (const seg of segs)
+        for (let i = 2; i + 1 < seg.length; i += 2)
+          l += Math.hypot(seg[i]! - seg[i - 2]!, seg[i + 1]! - seg[i - 1]!);
+      return l;
+    };
+    let checked = 0;
+    for (const seed of [5, 9, 14, 33, 41, 52, 60, 71, 88, 93, 104, 117]) {
+      const g = planning(seed);
+      g.setDial(0.9);
+      const p = g.previewNow();
+      expect(p.done).toBe(true);
+      const cue = p.tracks.find((t) => t.num === 0)!;
+      expect(cue.gen).toBe(0);
+      expect(cue.segs[0]!.slice(0, 2)).toEqual([g.cue.x, g.cue.y]);
+      for (const t of p.tracks) expect(t.gen).toBeLessThanOrEqual(1);
+      if (!p.contact) continue;
+      checked++;
+      // The ghost ball touches the ball it hits (contacts resolve within a substep's travel).
+      const hit = p.tracks.filter((t) => t.gen === 1).map((t) => g.balls.find((b) => b.id === t.id)!);
+      expect(hit.some((b) => Math.abs(Math.hypot(b.x - p.contact!.x, b.y - p.contact!.y) - 48) < 12)).toBe(
+        true,
+      );
+      // Short tail after the hit; hit balls' paths capped.
+      expect(pathLen(cue.segs.slice(cue.after))).toBeLessThanOrEqual(CUE_AFTER + 1e-6);
+      for (const t of p.tracks.filter((q) => q.gen === 1))
+        expect(pathLen(t.segs)).toBeLessThanOrEqual(HIT_LEN + 1e-6);
+      // It stopped looking as soon as it had seen enough.
+      expect(p.span).toBeLessThan(PREVIEW_T);
     }
-    if (p.contacts.length > 0) expect(p.tracks.some((t) => t.gen === 1)).toBe(true);
+    expect(checked).toBeGreaterThan(2);
   });
 
   it('remembers recent results, and works in slices', () => {

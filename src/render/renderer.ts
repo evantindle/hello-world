@@ -7,12 +7,13 @@ import { drawBalls, drawBallShadows, star } from './draw_balls';
 import { drawCue, drawGuide, drawSpeedLines } from './draw_cue';
 import { drawEditOver, drawEditUnder } from './draw_edit';
 import { drawFloorParts } from './draw_floor';
-import { drawPreviewOver, drawPreviewUnder } from './draw_preview';
+import { PreviewView } from './draw_preview';
 import { drawPartShadows, drawRaisedParts } from './draw_parts';
 import { buildVisual, drawHandles, drawPockets, drawTableBody, type HandleView } from './draw_table';
 
 export class Renderer {
   readonly ctx: CanvasRenderingContext2D;
+  private readonly previewView = new PreviewView();
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -53,14 +54,15 @@ export class Renderer {
     const chain = game.rules.preview === 'chain';
     const preview = game.preview;
     const guide = game.phase === 'plan' && !chain ? game.guide() : undefined;
-    if (preview) drawPreviewUnder(ctx, game, fx, preview);
-    else if (!chain) drawGuide(ctx, game, fx, cam, 'under', guide);
+    this.previewView.sync(preview, fx.time);
+    if (chain) this.previewView.drawUnder(ctx, game, fx);
+    else drawGuide(ctx, game, fx, cam, 'under', guide);
     drawPartShadows(ctx, game, cam);
     drawBallShadows(ctx, game, fx, cam);
     drawRaisedParts(ctx, game, fx, cam);
     drawBalls(ctx, game, fx, cam);
-    if (preview) drawPreviewOver(ctx, game, fx, cam, preview);
-    else if (!chain) drawGuide(ctx, game, fx, cam, 'over', guide);
+    if (chain) this.previewView.drawOver(ctx, game, fx, cam);
+    else drawGuide(ctx, game, fx, cam, 'over', guide);
     drawSpeedLines(ctx, fx);
     drawCue(ctx, game, fx, cam);
     drawHandles(ctx, game, fx, vt, view, cam);
