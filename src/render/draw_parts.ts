@@ -1,4 +1,4 @@
-import { COLORS, R } from '../config';
+import { COLORS } from '../config';
 import { TAU } from '../core/vec';
 import type { Fx } from '../fx/fx';
 import type { Game } from '../game/game';
@@ -6,8 +6,8 @@ import { arcPoints, THICK, type Part } from '../geom/parts';
 import type { Camera } from './camera';
 
 /**
- * Table toys. Raised toys (stubs, curved rails, glass, gates, bumpers) cast shadows and sit just
- * under the balls; flat toys lie on the felt under everything else.
+ * Raised table toys (stubs, curved rails, glass, gates, bumpers): they cast shadows and sit just
+ * under the balls. Flat toys on the felt are in draw_floor.ts.
  */
 
 function glassHp(game: Game, p: Part & { kind: 'glass' }): number {
@@ -246,26 +246,4 @@ function drawBumper(ctx: CanvasRenderingContext2D, game: Game, fx: Fx, cam: Came
   ctx.strokeStyle = COLORS.ink;
   ctx.stroke();
   ctx.restore();
-}
-
-/** Flat toys on the felt (drawn under the guide and the balls). */
-export function drawFloorParts(ctx: CanvasRenderingContext2D, game: Game, fx: Fx): void {
-  const t = fx.time;
-  for (const p of game.table.parts) {
-    if (p.kind !== 'bullseye') continue;
-    for (let i = 3; i >= 1; i--) {
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, (p.r * i) / 3, 0, TAU);
-      ctx.fillStyle = i % 2 === 1 ? 'rgba(255,77,109,0.55)' : 'rgba(255,248,231,0.55)';
-      ctx.fill();
-    }
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, p.r + 3 + Math.sin(t * 3) * 2, 0, TAU);
-    ctx.lineWidth = 2.5;
-    ctx.strokeStyle = COLORS.ink;
-    ctx.setLineDash([6, 6]);
-    ctx.stroke();
-    ctx.setLineDash([]);
-  }
-  void R;
 }

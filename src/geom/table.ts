@@ -21,7 +21,17 @@ import {
 } from '../config';
 import { hyp, type Vec } from '../core/vec';
 import type { Suit } from '../physics/ball';
-import { cloneParts, compileParts, type Bumper, type Part, type Wall } from './parts';
+import {
+  cloneParts,
+  compileFloor,
+  compileParts,
+  type Bumper,
+  type Field,
+  type Part,
+  type PortalEnd,
+  type Wall,
+  type Zone,
+} from './parts';
 import { angleAbove, angleBelow, distToSegment, segmentsIntersect, signedArea } from './polygon';
 
 /** What a stretch of cushion is made of. */
@@ -121,6 +131,11 @@ export interface TableGeom {
   /** Stubs, curved rails, glass panes and gates. */
   walls: Wall[];
   bumpers: Bumper[];
+  /** Speed pads and special felt. */
+  zones: Zone[];
+  /** Magnets, repulsors and black holes. */
+  fields: Field[];
+  portals: PortalEnd[];
 }
 
 export const AREA0 = TABLE_W * TABLE_H;
@@ -262,7 +277,8 @@ export function buildGeom(t: Table, hunger = 0): TableGeom {
   }
 
   const { walls, bumpers } = compileParts(t.parts ?? [], RAIL_MATS.felt.e, RAIL_MATS.felt.tdamp);
-  return { poly, rails, pockets, area: signedArea(poly), walls, bumpers };
+  const { zones, fields, portals } = compileFloor(t.parts ?? []);
+  return { poly, rails, pockets, area: signedArea(poly), walls, bumpers, zones, fields, portals };
 }
 
 export type InvalidReason =

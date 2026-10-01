@@ -1,9 +1,10 @@
-import { COLORS, R, TABLE_H, TABLE_W } from '../config';
+import { BLACKHOLE_CORE, COLORS, R, TABLE_H, TABLE_W } from '../config';
 import type { Sfx } from '../audio/sfx';
 import type { Game } from '../game/game';
 import { PEGS } from '../game/spin';
 import type { Camera } from '../render/camera';
 import { chargePull } from '../render/draw_cue';
+import { portalColor } from '../render/draw_floor';
 import type { Hud } from '../ui/hud';
 import type { Fx } from './fx';
 
@@ -25,6 +26,9 @@ const MISSES = [
 ];
 const STREAKS = ['', 'NICE!', 'SPICY!', 'TABLE WIZARD!', 'UNBENDLIEVABLE!'];
 const BUMPS = ['BOING!', 'DING!', 'PING!', 'BWONG!', 'BOINK!'];
+const ZOOMS = ['ZOOM!', 'NYOOM!', 'VROOM!', 'ZING!'];
+const WARPS = ['WHOOSH!', 'ZIP!', 'BLINK!', 'FWOOP!'];
+const GLORPS = ['GLORP!', 'SHLOOP!', 'BYE!', 'SPAGHETTI!'];
 
 function pick<T>(list: readonly T[], r: () => number): T {
   return list[Math.floor(r() * list.length)]!;
@@ -63,6 +67,8 @@ export class Director {
   private now = 0;
   private lastDialTick = 0;
   private lastBumpPop = 0;
+  private lastZoomPop = 0;
+  private lastFeltPop = 0;
   private bawked = false;
   /** English watch for the current shot: launch heading, the cue's velocity right after its
    * first contact, and which exclamations have been used. */
@@ -372,6 +378,79 @@ export class Director {
           this.cam.addShake(0.8);
           break;
         }
+        case 'boost': {
+          sfx.zoom();
+          fx.balls.squash(e.ball.id, e.ux, e.uy, 0.35);
+          fx.particles.sparks(e.x - e.ux * R, e.y - e.uy * R, -e.ux, -e.uy, 8, 520, r, '#ffd23f');
+          fx.particles.ring(e.x, e.y, 70, '#ffb347');
+          if (this.now - this.lastZoomPop > 0.3) {
+            this.lastZoomPop = this.now;
+            pop(pick(ZOOMS, r), e.x, e.y - 40, { size: 34, color: '#ffd23f', force: true });
+          }
+          if (e.ball.kind === 'cue') fx.balls.setMood(0, 'shock', 0.6);
+          this.cam.addShake(0.06);
+          break;
+        }
+        case 'felt': {
+          const loud = e.speed > 300 && this.now - this.lastFeltPop > 0.4;
+          if (loud) this.lastFeltPop = this.now;
+          if (e.felt === 'mud') {
+            sfx.splat();
+            fx.particles.dust(e.x, e.y, 6 + Math.round(e.speed / 200), 160, r, '#7a4b2a');
+            if (loud) pop('SPLAT!', e.x, e.y - 36, { size: 30, color: '#d9a26b' });
+          } else if (e.felt === 'ice') {
+            sfx.shing();
+            fx.particles.stars(e.x, e.y, 3, 160, r, '#e8fbff');
+            if (loud) pop('WHOA!', e.x, e.y - 36, { size: 30, color: '#bff0ff' });
+          } else {
+            sfx.fwump();
+            fx.particles.dust(e.x, e.y, 6 + Math.round(e.speed / 200), 180, r, '#e0c27a');
+            if (loud) pop('fwump', e.x, e.y - 34, { size: 26, color: '#ffe7a8' });
+          }
+          break;
+        }
+        case 'warp': {
+          sfx.warp();
+          const ends = game.geom.portals;
+          const from = ends.find((q) => q.src === e.src);
+          const to = ends.find((q) => q.src === e.link);
+          const cin = from ? portalColor(ends, from) : '#ff9f1c';
+          const cout = to ? portalColor(ends, to) : '#4cc9f0';
+          fx.particles.spawn({
+            kind: 'blip',
+            x: e.fromX,
+            y: e.fromY,
+            size: R,
+            life: 0.22,
+            color: e.ball.color,
+            drag: 0,
+          });
+          fx.particles.ring(e.fromX, e.fromY, 70, cin);
+          fx.particles.ring(e.x, e.y, 80, cout);
+          fx.balls.grow(e.ball.id);
+          pop(pick(WARPS, r), e.x, e.y - 40, { size: 30, color: cout });
+          if (e.ball.kind === 'cue') fx.balls.setMood(0, 'dizzy', 0.8);
+          break;
+        }
+        case 'swallowed': {
+          sfx.glorp();
+          fx.balls.swallow(e.ball, e.fromX, e.fromY, e.x, e.y, BLACKHOLE_CORE + 26, e.vx, e.vy);
+          fx.particles.ring(e.x, e.y, 90, '#c77dff');
+          pop(pick(GLORPS, r), e.x, e.y - 50, { size: 34, color: '#c77dff', force: true });
+          if (e.ball.kind === 'cue') fx.balls.setMood(0, 'shock', 2);
+          this.cam.addShake(0.12);
+          break;
+        }
+        case 'bloop': {
+          sfx.bloop();
+          fx.balls.unsink(e.ball.id);
+          fx.balls.grow(e.ball.id);
+          fx.particles.ring(e.x, e.y, 80, '#e0c3ff');
+          fx.particles.stars(e.x, e.y, 5, 200, r, '#e0c3ff');
+          pop('BLOOP!', e.x, e.y - 40, { size: 32, color: '#e0c3ff', force: true });
+          if (e.ball.kind === 'cue') fx.balls.setMood(0, 'dizzy', 1.2);
+          break;
+        }
         case 'kick':
           pop('KICK!', e.x, e.y, { size: 30, color: '#8fc2ff' });
           fx.particles.sparks(e.x, e.y, e.ball.vx, e.ball.vy, 5, 260, r, '#8fc2ff');
@@ -582,7 +661,7 @@ export class Director {
     if (g.phase === 'sim' && this.eng.on) this.watchEnglish(dtReal);
     if (g.phase === 'sim' && !this.bawked) {
       // The chicken panics the moment it starts running.
-      const chick = g.balls.find((b, i) => b.variant === 'chicken' && b.active && g.world.driven[i]);
+      const chick = g.balls.find((b, i) => b.variant === 'chicken' && b.active && g.world.running[i]);
       if (chick) {
         this.bawked = true;
         this.sfx.bawk();

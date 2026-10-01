@@ -127,6 +127,41 @@ export const CHICKEN_R = 200;
 export const CHICKEN_A = 3000;
 export const CHICKEN_VMAX = 900;
 
+// ---------------------------------------------------------------- floor toys
+/** Felt patches: multipliers on rolling friction and on drag. Sand eats fast balls (drag),
+ * mud eats slow ones (rolling friction), ice lets everything glide. */
+export const ICE_ROLL = 0.25;
+export const ICE_DRAG = 0.25;
+export const MUD_ROLL = 3.5;
+export const MUD_DRAG = 1;
+export const SAND_ROLL = 1.5;
+export const SAND_DRAG = 6;
+/** Default conveyor belt speed and fan push (u/s^2). */
+export const CONVEYOR_SPEED = 260;
+export const FAN_PUSH = 420;
+/** A belt grips balls this many times harder than felt (friction acts relative to the belt)... */
+export const BELT_GRIP = 3;
+/** ...and deadens their bounces off rails and toys, so a belt pins a ball instead of juggling it. */
+export const BELT_BOUNCE = 0.3;
+/** Magnets: inside this fraction of the radius the pull fades to nothing and damps the ball, so
+ * a caught ball settles on the magnet instead of orbiting it. */
+export const MAGNET_CORE = 0.25;
+export const CORE_DAMP = 6;
+/** Black hole: pull at the centre, how close a ball's centre must get to be swallowed, how long it
+ * stays gone, and how fast it comes back out. */
+export const BLACKHOLE_PULL = 1500;
+export const BLACKHOLE_CORE = 24;
+export const LIMBO_TIME = 0.6;
+export const BLACKHOLE_EXIT_V = 300;
+/** A ball leaving a portal cannot warp again until it is this far outside the exit disc. */
+export const PORTAL_SLACK = 1;
+/** Each speed pad kicks at most this many times a shot (a pad aimed at a rail cannot juggle). */
+export const BOOST_KICKS = 6;
+/** Stuck detector for tables with floor toys: if over one window every moving ball was pushed by a
+ * toy and stayed inside a box this small (a belt bouncing a ball off a rail), the shot is over. */
+export const STUCK_WINDOW = 1;
+export const STUCK_BOX = 3 * R;
+
 // ---------------------------------------------------------------- shot
 export const V_SHOT_MIN = 350;
 export const V_SHOT_MAX = 2300;

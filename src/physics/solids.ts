@@ -105,6 +105,7 @@ export function collideWall(
   w: Wall,
   wi: number,
   out: Sink,
+  em = 1,
 ): void {
   const min = R + THICK;
   const dx = w.bx - w.ax;
@@ -137,7 +138,7 @@ export function collideWall(
   b.y = qy + ny * min;
   const vn = b.vx * nx + b.vy * ny;
   if (vn >= 0) return;
-  const e = -vn < REST_SPEED ? 0 : w.e;
+  const e = -vn < REST_SPEED ? 0 : w.e * em;
   const tx = b.vx - nx * vn;
   const ty = b.vy - ny * vn;
   b.vx = tx * w.tdamp - nx * vn * e;

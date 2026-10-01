@@ -207,7 +207,8 @@ export class Hud {
     for (const b of g.balls) {
       if (b.kind !== 'object') continue;
       const pip = this.balls[b.num - 1];
-      if (pip) pip.classList.toggle('gone', !b.active);
+      // A ball lost in a black hole for a moment is not gone.
+      if (pip) pip.classList.toggle('gone', b.gone !== null);
     }
     const planning = g.phase === 'plan';
     this.stretch.classList.toggle('show', planning);

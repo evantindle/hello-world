@@ -122,8 +122,8 @@ describe('English', () => {
     const spun = ball(0, 0, 0, 500, 0);
     spun.braking = true;
     spun.eng = 1;
-    spinFriction(plain, 0.1, 1);
-    spinFriction(spun, 0.1, 1);
+    spinFriction(plain, 0.1, 1, 1);
+    spinFriction(spun, 0.1, 1, 1);
     expect(500 - plain.vx).toBeGreaterThan((500 - spun.vx) * (CUE_BRAKE - 0.5));
     expect(500 - spun.vx).toBeCloseTo(A_ROLL * 0.1 + (500 - A_ROLL * 0.1) * 0.02, 3);
   });

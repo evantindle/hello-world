@@ -1,3 +1,4 @@
+import { BLACKHOLE_PULL, CONVEYOR_SPEED, FAN_PUSH } from '../config';
 import type { Vec } from '../core/vec';
 
 /**
@@ -199,4 +200,116 @@ export function compileParts(parts: readonly Part[], e: number, tdamp: number): 
     }
   }
   return { walls, bumpers };
+}
+
+// ---------------------------------------------------------------- floor toys: zones, fields, portals
+
+/** A patch of felt or a speed pad: an oriented rectangle. */
+export interface Zone {
+  kind: FeltKind | 'booster';
+  src: number;
+  /** Centre, unit direction along the patch, and half extents along / across it. */
+  cx: number;
+  cy: number;
+  ux: number;
+  uy: number;
+  hl: number;
+  hw: number;
+  /** Conveyor belt speed, fan push, or booster kick. */
+  power: number;
+}
+
+/** Magnets pull (polarity 1), repulsors push (-1), black holes pull and swallow. */
+export interface Field {
+  kind: 'magnet' | 'blackhole';
+  src: number;
+  x: number;
+  y: number;
+  r: number;
+  strength: number;
+  polarity: 1 | -1;
+  exits: Vec[];
+}
+
+/** One end of a portal, with the other end's position. */
+export interface PortalEnd {
+  src: number;
+  link: number;
+  x: number;
+  y: number;
+  r: number;
+  ox: number;
+  oy: number;
+  /** Index of the linked end in the compiled portal list. */
+  to: number;
+}
+
+export interface FloorCompiled {
+  zones: Zone[];
+  fields: Field[];
+  portals: PortalEnd[];
+}
+
+/** Default push for each kind of felt (conveyor: belt speed; fan: acceleration). */
+export const FELT_POWER: Record<FeltKind, number> = { ice: 0, mud: 0, sand: 0, conveyor: CONVEYOR_SPEED, fan: FAN_PUSH };
+
+export function compileFloor(parts: readonly Part[]): FloorCompiled {
+  const zones: Zone[] = [];
+  const fields: Field[] = [];
+  const portals: PortalEnd[] = [];
+  for (const p of parts) {
+    if (p.kind === 'booster' || p.kind === 'felt') {
+      const u = unit(p.dir);
+      const len = p.kind === 'booster' ? p.len : p.w;
+      const wid = p.kind === 'booster' ? p.wid : p.h;
+      zones.push({
+        kind: p.kind === 'booster' ? 'booster' : p.felt,
+        src: p.id,
+        cx: p.x,
+        cy: p.y,
+        ux: u.x,
+        uy: u.y,
+        hl: len / 2,
+        hw: wid / 2,
+        power: p.kind === 'booster' ? p.kick : (p.power ?? FELT_POWER[p.felt]),
+      });
+    } else if (p.kind === 'magnet') {
+      fields.push({ kind: 'magnet', src: p.id, x: p.x, y: p.y, r: p.r, strength: p.strength, polarity: p.polarity, exits: [] });
+    } else if (p.kind === 'blackhole') {
+      fields.push({ kind: 'blackhole', src: p.id, x: p.x, y: p.y, r: p.r, strength: BLACKHOLE_PULL, polarity: 1, exits: p.exits });
+    } else if (p.kind === 'portal') {
+      const other = parts.find((q) => q.kind === 'portal' && q.id === p.link && q.id !== p.id);
+      if (other) portals.push({ src: p.id, link: other.id, x: p.x, y: p.y, r: p.r, ox: other.x, oy: other.y, to: -1 });
+    }
+  }
+  // An end whose partner did not compile goes nowhere: drop it (and re-link what is left).
+  let live = portals;
+  for (;;) {
+    for (const e of live) e.to = live.findIndex((q) => q.src === e.link);
+    const next = live.filter((e) => e.to >= 0);
+    if (next.length === live.length) break;
+    live = next;
+  }
+  return { zones, fields, portals: live };
+}
+
+/** Whether (x, y) lies on zone z. */
+export function inZone(z: Zone, x: number, y: number): boolean {
+  const dx = x - z.cx;
+  const dy = y - z.cy;
+  const a = dx * z.ux + dy * z.uy;
+  const b = -dx * z.uy + dy * z.ux;
+  return a >= -z.hl && a <= z.hl && b >= -z.hw && b <= z.hw;
+}
+
+/** The zone's corners, for drawing. */
+export function zoneCorners(z: Zone): Vec[] {
+  const px = -z.uy;
+  const py = z.ux;
+  return [
+    { x: z.cx - z.ux * z.hl - px * z.hw, y: z.cy - z.uy * z.hl - py * z.hw },
+    { x: z.cx + z.ux * z.hl - px * z.hw, y: z.cy + z.uy * z.hl - py * z.hw },
+    { x: z.cx + z.ux * z.hl + px * z.hw, y: z.cy + z.uy * z.hl + py * z.hw },
+    { x: z.cx - z.ux * z.hl + px * z.hw, y: z.cy - z.uy * z.hl + py * z.hw },
+  ];
 }

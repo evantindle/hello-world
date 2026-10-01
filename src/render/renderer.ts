@@ -5,7 +5,8 @@ import type { Game } from '../game/game';
 import type { Camera } from './camera';
 import { drawBalls, drawBallShadows, star } from './draw_balls';
 import { drawCue, drawGuide, drawSpeedLines } from './draw_cue';
-import { drawFloorParts, drawPartShadows, drawRaisedParts } from './draw_parts';
+import { drawFloorParts } from './draw_floor';
+import { drawPartShadows, drawRaisedParts } from './draw_parts';
 import { buildVisual, drawHandles, drawPockets, drawTableBody, type HandleView } from './draw_table';
 
 export class Renderer {
@@ -43,7 +44,7 @@ export class Renderer {
     const vt = buildVisual(game.table, fx.jelly);
     drawTableBody(ctx, game, fx, vt, cam);
     drawPockets(ctx, game, fx);
-    drawFloorParts(ctx, game, fx);
+    drawFloorParts(ctx, game, fx, cam, vt);
     const guide = game.phase === 'plan' ? game.guide() : undefined;
     drawGuide(ctx, game, fx, cam, 'under', guide);
     drawPartShadows(ctx, game, cam);
@@ -195,6 +196,17 @@ function drawParticles(ctx: CanvasRenderingContext2D, fx: Fx, upright: number): 
         ctx.strokeStyle = COLORS.ink;
         ctx.stroke();
         ctx.restore();
+        break;
+      }
+      case 'blip': {
+        ctx.globalAlpha = Math.min(1, k * 2);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, Math.max(0.5, p.size * k), 0, TAU);
+        ctx.fillStyle = p.color;
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = COLORS.ink;
+        ctx.stroke();
         break;
       }
       case 'ember': {

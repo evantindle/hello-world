@@ -89,14 +89,15 @@ export function cushionSpin(b: Ball, nx: number, ny: number, vn: number, e: numb
 }
 
 /**
- * Friction for a spinning cue ball over one substep. Returns true if the ball should be exempt
- * from the rest snap this substep (it is still skidding).
+ * Friction for a spinning cue ball over one substep, scaled by the felt under it (mr: rolling and
+ * sliding friction, md: drag). Returns true if the ball should be exempt from the rest snap this
+ * substep (it is still skidding).
  */
-export function spinFriction(b: Ball, h: number, mult: number): boolean {
+export function spinFriction(b: Ball, h: number, mr: number, md: number): boolean {
   const s = hyp(b.sx, b.sy);
   if (s > SLIP_EPS) {
     // Skidding: only cloth friction on the slip acts.
-    const d = Math.min(s, 3.5 * A_SLIDE * mult * h);
+    const d = Math.min(s, 3.5 * A_SLIDE * mr * h);
     const ux = b.sx / s;
     const uy = b.sy / s;
     b.vx -= (ux * d) / 3.5;
@@ -118,7 +119,7 @@ export function spinFriction(b: Ball, h: number, mult: number): boolean {
   if (sp > 0) {
     const e1 = (1 - b.eng) * (1 - b.eng);
     const k = b.braking ? 1 + (CUE_BRAKE - 1) * e1 * e1 : 1;
-    const sp2 = Math.max(0, sp - A_ROLL * k * mult * h) * (1 - K_DRAG * k * mult * h);
+    const sp2 = Math.max(0, sp - A_ROLL * k * mr * h) * (1 - K_DRAG * k * md * h);
     const f = sp2 / sp;
     b.vx *= f;
     b.vy *= f;

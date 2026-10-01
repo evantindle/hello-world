@@ -448,4 +448,46 @@ export class Sfx {
     this.tone('square', 620, 0.09, 0.07, { f1: 900, lp: 2400 });
     this.tone('square', 760, 0.16, 0.07, { f1: 420, lp: 2400, delay: 0.1 });
   }
+
+  // ------------------------------------------------------------------ v2: floor toys
+
+  /** Speed pad: a rising saw slide. */
+  zoom(): void {
+    if (!this.allow(6)) return;
+    this.slide('sawtooth', 220, 1300, 0.28, 0.08, 2600);
+    this.hiss(0.25, 0.12, 'bandpass', 900, 2, 0, 4200);
+  }
+
+  /** Portal: a hissing sweep down then up. */
+  warp(): void {
+    if (!this.allow(6)) return;
+    this.hiss(0.32, 0.2, 'bandpass', 3800, 3, 0, 500);
+    this.slide('sine', 1400, 300, 0.16, 0.12);
+    this.slide('sine', 300, 1600, 0.18, 0.1, undefined, 0.14);
+  }
+
+  /** Black hole: a long wobbly slide down the drain... */
+  glorp(): void {
+    this.tone('sawtooth', 520, 0.6, 0.12, { f1: 45, vibrato: [11, 40], lp: 1400 });
+    this.hiss(0.6, 0.15, 'lowpass', 1600, 2, 0, 120);
+  }
+
+  /** ...and the pop when it spits a ball back out. */
+  bloop(): void {
+    this.tone('sine', 180, 0.14, 0.3, { f1: 720 });
+    this.tone('sine', 900, 0.08, 0.1, { delay: 0.1 });
+  }
+
+  /** Ice: a bright skate scrape. */
+  shing(): void {
+    if (!this.allow(4)) return;
+    this.hiss(0.22, 0.16, 'highpass', 5000, 1, 0, 9000);
+    this.tone('sine', 3100, 0.18, 0.04);
+  }
+
+  /** Sand: a soft gritty thud. */
+  fwump(): void {
+    if (!this.allow(4)) return;
+    this.hiss(0.16, 0.25, 'lowpass', 1400, 0.8, 0, 300);
+  }
 }

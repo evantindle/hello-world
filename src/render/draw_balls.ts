@@ -74,7 +74,8 @@ export function drawBalls(ctx: CanvasRenderingContext2D, game: Game, fx: Fx, cam
   }
   for (const b of game.balls) {
     if (!b.active) continue;
-    drawBall(ctx, b, fx.balls.get(b.id), fx, cam, game, b.x, b.y, 1);
+    const f = fx.balls.get(b.id);
+    drawBall(ctx, b, f, fx, cam, game, b.x, b.y, fx.balls.growScale(f));
   }
   const hop = hopState(game);
   if (hop && hop.k > 0) {

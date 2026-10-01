@@ -1,7 +1,7 @@
-import { A_SLIDE, R, SPIN_RANGE } from '../config';
+import { A_SLIDE, BLACKHOLE_CORE, R, SPIN_RANGE } from '../config';
 import { hyp } from '../core/vec';
 import type { Ball } from '../physics/world';
-import { THICK, type Bumper, type Wall } from './parts';
+import { THICK, type Bumper, type Field, type Wall, type Zone } from './parts';
 import { closestOnSegment } from './polygon';
 import type { Pocket, Rail, TableGeom } from './table';
 
@@ -87,6 +87,37 @@ export function sweepCapsule(
   );
 }
 
+/**
+ * Where the ray first enters zone z's rectangle, or Infinity. A ray that starts on the zone does
+ * not count (a ball resting on a pad does not fire it).
+ */
+export function rayZone(ox: number, oy: number, dx: number, dy: number, z: Zone): number {
+  const px = ox - z.cx;
+  const py = oy - z.cy;
+  const la = px * z.ux + py * z.uy;
+  const lb = -px * z.uy + py * z.ux;
+  if (la >= -z.hl && la <= z.hl && lb >= -z.hw && lb <= z.hw) return Infinity;
+  const da = dx * z.ux + dy * z.uy;
+  const db = -dx * z.uy + dy * z.ux;
+  let t0 = 0;
+  let t1 = Infinity;
+  for (const [l, d, h] of [
+    [la, da, z.hl],
+    [lb, db, z.hw],
+  ] as const) {
+    if (Math.abs(d) < 1e-12) {
+      if (l < -h || l > h) return Infinity;
+      continue;
+    }
+    let ta = (-h - l) / d;
+    let tb = (h - l) / d;
+    if (ta > tb) [ta, tb] = [tb, ta];
+    if (ta > t0) t0 = ta;
+    if (tb < t1) t1 = tb;
+  }
+  return t0 <= t1 ? t0 : Infinity;
+}
+
 export interface Seg {
   x0: number;
   y0: number;
@@ -94,7 +125,9 @@ export interface Seg {
   y1: number;
 }
 
-export type HitKind = 'rail' | 'ball' | 'hole' | 'part' | 'bumper' | 'none';
+/** What the guide line runs into. 'boost', 'portal' (a second one) and 'vortex' (a black hole's
+ * pull) end the line with a question: past them the guide would only be guessing. */
+export type HitKind = 'rail' | 'ball' | 'hole' | 'part' | 'bumper' | 'boost' | 'portal' | 'vortex' | 'none';
 
 interface Hit {
   t: number;
@@ -104,6 +137,10 @@ interface Hit {
   bumper?: Bumper;
   ball?: Ball;
   pocket?: Pocket;
+  zone?: Zone;
+  field?: Field;
+  /** Index into geom.portals. */
+  portal?: number;
 }
 
 /** The launch spin, for a guide that bends with English. */
@@ -119,6 +156,8 @@ export interface GuideSpin {
 export interface Guide {
   /** The skid while side English bends the path (absent without it). Ends where `path` starts. */
   curve?: { x: number; y: number }[];
+  /** A portal on the way: the leg into its entrance; `path` then starts where the ball comes out. */
+  hop?: { path: Seg; x: number; y: number };
   path: Seg;
   kind: HitKind;
   /** Unit normal at contact: away from the rail, or from the object ball toward the cue. */
@@ -143,6 +182,7 @@ function firstHit(
   dy: number,
   skipId: number,
   maxT: number,
+  skipPortal = -1,
 ): Hit {
   let best: Hit = { t: maxT, kind: 'none' };
   for (const r of geom.rails) {
@@ -168,6 +208,26 @@ function firstHit(
     if (!p.open) continue;
     const t = rayCircle(ox, oy, dx, dy, p.x, p.y, skipId === 0 ? p.rc : p.r);
     if (t < best.t) best = { t, kind: 'hole', pocket: p };
+  }
+  for (const z of geom.zones) {
+    if (z.kind !== 'booster') continue;
+    const t = rayZone(ox, oy, dx, dy, z);
+    if (t < best.t) best = { t, kind: 'boost', zone: z };
+  }
+  const ends = geom.portals;
+  for (let k = 0; k < ends.length; k++) {
+    const e = ends[k]!;
+    // A ball sitting in a portal has to leave it before it can warp.
+    if (k === skipPortal || hyp(ox - e.x, oy - e.y) < e.r) continue;
+    const t = rayCircle(ox, oy, dx, dy, e.x, e.y, e.r);
+    if (t < best.t) best = { t, kind: 'portal', portal: k };
+  }
+  for (const f of geom.fields) {
+    if (f.kind !== 'blackhole') continue;
+    // Already in the pull: show the way to the core.
+    const r = hyp(ox - f.x, oy - f.y) < f.r ? BLACKHOLE_CORE : f.r;
+    const t = rayCircle(ox, oy, dx, dy, f.x, f.y, r);
+    if (t < best.t) best = { t, kind: 'vortex', field: f };
   }
   return best;
 }
@@ -233,12 +293,27 @@ export function castGuide(
       dy = fy / fl;
     }
   }
-  const first = hit ?? firstHit(geom, balls, ox, oy, dx, dy, cue.id, 5000);
+  let first = hit ?? firstHit(geom, balls, ox, oy, dx, dy, cue.id, 5000);
+  let hop: Guide['hop'];
+  if (first.kind === 'portal' && first.portal !== undefined) {
+    // One hop: out of the other end at the same offset, same heading. (A second portal just ends
+    // the line.)
+    const e = geom.portals[first.portal]!;
+    const to = geom.portals[e.to]!;
+    const px = ox + dx * first.t;
+    const py = oy + dy * first.t;
+    hop = { path: { x0: ox, y0: oy, x1: px, y1: py }, x: to.x + (px - e.x), y: to.y + (py - e.y) };
+    travelled += first.t;
+    ox = hop.x;
+    oy = hop.y;
+    first = firstHit(geom, balls, ox, oy, dx, dy, cue.id, 5000, e.to);
+  }
   const hx = ox + dx * first.t;
   const hy = oy + dy * first.t;
   travelled += first.t;
   const guide: Guide = { path: { x0: ox, y0: oy, x1: hx, y1: hy }, kind: first.kind, nx: 0, ny: 0 };
   if (curve && curve.length > 1) guide.curve = curve;
+  if (hop) guide.hop = hop;
 
   const bouncy = (first.kind === 'rail' && first.rail) || (first.kind === 'part' && first.wall) || first.bumper;
   if (bouncy) {

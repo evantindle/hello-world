@@ -3,6 +3,8 @@ import { damp } from '../core/easing';
 import { TAU } from '../core/vec';
 import type { Ball } from '../physics/world';
 
+const GROW_TIME = 0.22;
+
 export type Mood = 'normal' | 'squint' | 'shock' | 'dizzy' | 'happy' | 'squeeze' | 'worried';
 
 export interface Sink {
@@ -33,6 +35,8 @@ export interface BallFx {
   sqT: number;
   sink: Sink | null;
   sunk: boolean;
+  /** Seconds left of popping out of a portal or a black hole (the ball grows back to size). */
+  grow: number;
   /** Cue ball eyes. */
   lookX: number;
   lookY: number;
@@ -89,6 +93,7 @@ function fresh(rand: () => number): BallFx {
     sqT: 10,
     sink: null,
     sunk: false,
+    grow: 0,
     lookX: 0,
     lookY: 0,
     blink: 0,
@@ -143,6 +148,24 @@ export class BallFxStore {
     f.sunk = false;
   }
 
+  /** Swallowed by a black hole: spiral in from where the ball was when it crossed the core. */
+  swallow(b: Ball, x0: number, y0: number, hx: number, hy: number, hr: number, vx: number, vy: number): void {
+    const f = this.get(b.id);
+    const cross = (hx - x0) * vy - (hy - y0) * vx;
+    f.sink = { t: 0, dur: 0.5, x0, y0, hx, hy, hr, dir: cross >= 0 ? 1 : -1 };
+    f.sunk = false;
+  }
+
+  /** Popping out of a portal or a black hole. */
+  grow(id: number): void {
+    this.get(id).grow = GROW_TIME;
+  }
+
+  /** Current size while growing back, 0.4 -> 1. */
+  growScale(f: BallFx): number {
+    return f.grow > 0 ? 1 - 0.6 * (f.grow / GROW_TIME) : 1;
+  }
+
   unsink(id: number): void {
     const f = this.get(id);
     f.sink = null;
@@ -168,6 +191,7 @@ export class BallFxStore {
     for (const b of balls) {
       const f = this.get(b.id);
       f.sqT += dt;
+      if (f.grow > 0) f.grow = Math.max(0, f.grow - dt);
       if (f.sink) {
         f.sink.t += dt;
         if (f.sink.t >= f.sink.dur) {

@@ -11,7 +11,9 @@ export type ParticleKind =
   | 'drool'
   | 'shard'
   | 'yolk'
-  | 'feather';
+  | 'feather'
+  /** A ball-sized blob shrinking to nothing (a ball diving into a portal). */
+  | 'blip';
 
 export interface Particle {
   kind: ParticleKind;

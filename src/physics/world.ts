@@ -1,5 +1,6 @@
 import {
   A_ROLL,
+  BELT_BOUNCE,
   CUE_BRAKE,
   CUE_TIRED_RAILS,
   E_BALL,
@@ -12,6 +13,8 @@ import {
   SETTLE_GRACE,
   SIM_TIMEOUT,
   SOLVER_ITERS,
+  STUCK_BOX,
+  STUCK_WINDOW,
   SUCTION_A,
   V_MAX,
   V_STOP,
@@ -20,6 +23,7 @@ import { hyp } from '../core/vec';
 import { centroid, nearestBoundary, pointInPolygon } from '../geom/polygon';
 import { chomperOpen, type Pocket, type Rail, type TableGeom } from '../geom/table';
 import { clearTally, type Ball } from './ball';
+import { floorState, flushLimbo, pullForces, teleports, zoneForces, type FloorEvent, type FloorState } from './floor';
 import { logBallHit, logCushion, logPot, newLog, type TurnLog } from './log';
 import { accepts, spits, spitOut, sucks } from './pockets';
 import {
@@ -62,6 +66,7 @@ export type PhysEvent =
   /** Sidespin threw the cue ball along a cushion. */
   | { type: 'kick'; ball: Ball; x: number; y: number; dv: number }
   | SolidEvent
+  | FloorEvent
   | { type: 'stopped'; timedOut: boolean };
 
 export interface World {
@@ -75,6 +80,8 @@ export interface World {
   pulled: boolean[];
   /** Per ball index: pushed by a field or belt this substep (exempt from the rest snap). */
   driven: boolean[];
+  /** Per ball index: a chicken running on its own legs this substep (no rolling friction). */
+  running: boolean[];
   lastSubsteps: number;
   /** State of the world's own random stream (black-hole exits), so a cloned world agrees. */
   rngState: number;
@@ -90,6 +97,13 @@ export interface World {
   spitLock: number[];
   /** Glass hit points, gate memory and bumper kicks for this shot. */
   solid: SolidState;
+  /** Pad memory, felt under each ball, portal locks and black-hole limbo. */
+  floor: FloorState;
+  /** Stuck detector (tables with floor toys): when the window began, each ball's extent since
+   * ([minX, minY, maxX, maxY] per ball), and whether a toy pushed it. */
+  stuckAt: number;
+  box: Float64Array;
+  pushed: Uint8Array;
 }
 
 /** Seconds per stillness check: if nothing moved more than STILL_DIST in one, the shot is over. */
@@ -106,6 +120,7 @@ export function createWorld(balls: Ball[], geom: TableGeom, seed = 0): World {
     stopped: false,
     pulled: balls.map(() => false),
     driven: balls.map(() => false),
+    running: balls.map(() => false),
     lastSubsteps: 0,
     rngState: seed >>> 0,
     stillAt: 0,
@@ -116,7 +131,17 @@ export function createWorld(balls: Ball[], geom: TableGeom, seed = 0): World {
     chompOpen: geom.pockets.filter((p) => p.plug !== null).map((p) => chomperOpen(chomperOf(p), 0)),
     spitLock: balls.map(() => 0),
     solid: solidState(geom.walls, geom.bumpers, balls),
+    floor: floorState(geom, balls),
+    stuckAt: 0,
+    box: boxOf(balls),
+    pushed: new Uint8Array(balls.length),
   };
+}
+
+function boxOf(balls: readonly Ball[]): Float64Array {
+  const box = new Float64Array(balls.length * 4);
+  balls.forEach((b, i) => box.set([b.x, b.y, b.x, b.y], i * 4));
+  return box;
 }
 
 function chomperOf(p: Pocket): { period: number; open: number; phase: number } {
@@ -153,6 +178,12 @@ export function stepWorld(w: World, dt: number, out: PhysEvent[]): void {
   if (w.pulled.length !== nb) w.pulled = balls.map(() => false);
   if (w.driven.length !== nb) w.driven = balls.map(() => false);
   if (w.spitLock.length !== nb) w.spitLock = balls.map(() => 0);
+  if (w.running.length !== nb) w.running = balls.map(() => false);
+  if (w.floor.n !== nb) w.floor = floorState(w.geom, balls);
+  if (w.pushed.length !== nb) {
+    w.pushed = new Uint8Array(nb);
+    w.box = boxOf(balls);
+  }
 
   let vmax = 0;
   for (let i = 0; i < nb; i++) {
@@ -190,6 +221,7 @@ export function stepWorld(w: World, dt: number, out: PhysEvent[]): void {
     if (w.chompers.length) chomp(w, t, out);
     const walls = w.geom.walls;
     const bumpers = w.geom.bumpers;
+    const zoned = w.geom.zones.length > 0;
     for (let it = 0; it < SOLVER_ITERS; it++) {
       for (let i = 0; i < nb; i++) {
         const a = balls[i]!;
@@ -202,17 +234,22 @@ export function stepWorld(w: World, dt: number, out: PhysEvent[]): void {
       for (let i = 0; i < nb; i++) {
         const b = balls[i]!;
         if (!b.active) continue;
-        for (let k = 0; k < rails.length; k++) collideRail(b, rails[k]!, out);
-        for (let k = 0; k < w.chompers.length; k++) if (!w.chompOpen[k]) collideRail(b, w.chompers[k]!.plug!, out);
-        for (let k = 0; k < walls.length; k++) collideWall(w.solid, b, i, walls[k]!, k, out);
+        // A ball riding a belt bounces dead (the belt would otherwise juggle it off a rail forever).
+        const em = zoned && (w.floor.beltX[i] !== 0 || w.floor.beltY[i] !== 0) ? BELT_BOUNCE : 1;
+        for (let k = 0; k < rails.length; k++) collideRail(b, rails[k]!, out, em);
+        for (let k = 0; k < w.chompers.length; k++) if (!w.chompOpen[k]) collideRail(b, w.chompers[k]!.plug!, out, em);
+        for (let k = 0; k < walls.length; k++) collideWall(w.solid, b, i, walls[k]!, k, out, em);
         for (let k = 0; k < bumpers.length; k++) collideBumper(w.solid, b, bumpers[k]!, k, out);
       }
     }
     effects(w, out, mark);
     updateGateSides(w.solid, walls, balls);
+    if (w.floor.limbo > 0 || w.geom.portals.length || w.geom.fields.length) {
+      teleports(w.floor, w.geom, w.solid, balls, h, out, () => worldRand(w));
+    }
     guard(w, t, out);
     suctionAndCapture(w, h, t, out);
-    fields(w, h);
+    fields(w, h, out);
     friction(w, h);
     for (let k = mark; k < out.length; k++) note(w, out[k]!);
     done++;
@@ -227,13 +264,11 @@ export function stepWorld(w: World, dt: number, out: PhysEvent[]): void {
   }
   w.lastSubsteps = n;
 
-  let moving = false;
-  for (let i = 0; i < nb; i++) {
+  // A ball lost in a black hole is still on its way somewhere.
+  let moving = w.floor.limbo > 0;
+  for (let i = 0; i < nb && !moving; i++) {
     const b = balls[i]!;
-    if (b.active && (b.vx !== 0 || b.vy !== 0 || w.pulled[i])) {
-      moving = true;
-      break;
-    }
+    if (b.active && (b.vx !== 0 || b.vy !== 0 || w.pulled[i])) moving = true;
   }
   w.quietFor = moving ? 0 : w.quietFor + dt;
   w.t += dt;
@@ -243,8 +278,8 @@ export function stepWorld(w: World, dt: number, out: PhysEvent[]): void {
   } else if (w.t - w.stillAt >= STILL_WINDOW) {
     // A ball pinned against a rail by a field (or wedged somewhere) never reads as quiet: if
     // nothing has really moved for a whole window, call the shot over anyway.
-    let still = true;
-    for (let i = 0; i < nb; i++) {
+    let still = w.floor.limbo === 0;
+    for (let i = 0; i < nb && still; i++) {
       const b = balls[i]!;
       if (b.active && hyp(b.x - w.stillX[i]!, b.y - w.stillY[i]!) >= STILL_DIST) {
         still = false;
@@ -265,6 +300,13 @@ export function stepWorld(w: World, dt: number, out: PhysEvent[]): void {
       }
     }
   }
+  if (!w.stopped && (w.geom.zones.length || w.geom.fields.length) && stuck(w)) {
+    for (const b of balls) {
+      b.vx = 0;
+      b.vy = 0;
+    }
+    finish(w, out, false);
+  }
   if (!w.stopped && w.t >= SIM_TIMEOUT) {
     for (const b of balls) {
       b.vx = 0;
@@ -274,7 +316,45 @@ export function stepWorld(w: World, dt: number, out: PhysEvent[]): void {
   }
 }
 
+/**
+ * A belt can bounce a ball off a rail forever, and the stillness check never sees it sit still.
+ * Over each window, track how far every ball strays; if every ball that moved was being pushed by
+ * a toy and stayed inside a small box, it is stuck, and the shot is over.
+ */
+function stuck(w: World): boolean {
+  const balls = w.balls;
+  const box = w.box;
+  for (let i = 0; i < balls.length; i++) {
+    const b = balls[i]!;
+    if (!b.active) continue;
+    const k = i * 4;
+    if (b.x < box[k]!) box[k] = b.x;
+    if (b.y < box[k + 1]!) box[k + 1] = b.y;
+    if (b.x > box[k + 2]!) box[k + 2] = b.x;
+    if (b.y > box[k + 3]!) box[k + 3] = b.y;
+    if (w.driven[i]) w.pushed[i] = 1;
+  }
+  if (w.t - w.stuckAt < STUCK_WINDOW) return false;
+  let jammed = w.floor.limbo === 0;
+  for (let i = 0; i < balls.length && jammed; i++) {
+    if (!balls[i]!.active) continue;
+    const k = i * 4;
+    const ex = box[k + 2]! - box[k]!;
+    const ey = box[k + 3]! - box[k + 1]!;
+    if (ex < STILL_DIST && ey < STILL_DIST) continue;
+    if (!w.pushed[i] || ex >= STUCK_BOX || ey >= STUCK_BOX) jammed = false;
+  }
+  if (jammed) return true;
+  w.stuckAt = w.t;
+  w.pushed.fill(0);
+  balls.forEach((b, i) => box.set([b.x, b.y, b.x, b.y], i * 4));
+  return false;
+}
+
 function finish(w: World, out: PhysEvent[], timedOut: boolean): void {
+  for (const b of flushLimbo(w.floor, w.geom, w.solid, w.balls, () => worldRand(w))) {
+    if (!pointInPolygon(b.x, b.y, w.geom.poly)) rescue(b, w.geom);
+  }
   w.stopped = true;
   w.log.timedOut = timedOut;
   const cue = w.balls.find((b) => b.kind === 'cue');
@@ -332,14 +412,26 @@ function effects(w: World, out: PhysEvent[], mark: number): void {
   }
 }
 
-/** Forces that act on balls: for now, the chicken fleeing a moving cue ball. */
-function fields(w: World, h: number): void {
+/**
+ * Forces that act on balls: speed pads, fans and belts, magnets, repulsors and black holes, and
+ * the chicken fleeing a moving cue ball. Each one marks the balls it keeps moving as driven.
+ */
+function fields(w: World, h: number, out: PhysEvent[]): void {
   const balls = w.balls;
+  const zoned = w.geom.zones.length > 0;
+  const pulls = w.geom.fields.length > 0;
   let cue: Ball | undefined;
   for (const b of balls) if (b.kind === 'cue') cue = b;
   for (let i = 0; i < balls.length; i++) {
     const b = balls[i]!;
-    w.driven[i] = b.variant === 'chicken' ? flee(b, cue, h) : false;
+    const run = b.variant === 'chicken' ? flee(b, cue, h) : false;
+    let driven = run;
+    if (b.active) {
+      if (zoned && zoneForces(w.floor, w.geom, b, i, h, out)) driven = true;
+      if (pulls && pullForces(w.geom, b, h)) driven = true;
+    }
+    w.running[i] = run;
+    w.driven[i] = driven;
   }
 }
 
@@ -410,7 +502,7 @@ export function collideBalls(a: Ball, b: Ball, out: PhysEvent[]): void {
 }
 
 /** Circle vs segment. Using the closest point makes rail ends behave as rounded jaws. */
-export function collideRail(b: Ball, r: Rail, out: PhysEvent[]): void {
+export function collideRail(b: Ball, r: Rail, out: PhysEvent[], em = 1): void {
   const dx = r.bx - r.ax;
   const dy = r.by - r.ay;
   const l2 = dx * dx + dy * dy;
@@ -433,7 +525,7 @@ export function collideRail(b: Ball, r: Rail, out: PhysEvent[]): void {
   b.y = qy + ny * R;
   const vn = b.vx * nx + b.vy * ny;
   if (vn >= 0) return;
-  const e = -vn < REST_SPEED ? 0 : r.e;
+  const e = -vn < REST_SPEED ? 0 : r.e * em;
   const tx = b.vx - nx * vn;
   const ty = b.vy - ny * vn;
   b.vx = tx * r.tdamp - nx * vn * e;
@@ -594,31 +686,53 @@ function suctionAndCapture(w: World, h: number, t: number, out: PhysEvent[]): vo
 
 function friction(w: World, h: number): void {
   const balls = w.balls;
+  const fl = w.floor;
+  const zoned = w.geom.zones.length > 0;
   for (let i = 0; i < balls.length; i++) {
     const b = balls[i]!;
     if (!b.active) continue;
     // A fleeing chicken is running on its own legs.
-    if (w.driven[i] && b.variant === 'chicken') continue;
-    if (b.kind === 'cue' && (b.eng > 0 || hasSpin(b))) {
-      const skidding = spinFriction(b, h, 1);
-      if (!skidding && hyp(b.vx, b.vy) < V_STOP && !w.pulled[i] && !w.driven[i]) {
-        b.vx = 0;
-        b.vy = 0;
-        clearSpinState(b);
-      }
+    if (w.running[i]) continue;
+    if (!zoned) {
+      rub(w, i, b, h, 1, 1);
       continue;
     }
-    const sp = hyp(b.vx, b.vy);
-    if (sp === 0) continue;
-    const k = b.braking ? CUE_BRAKE : 1;
-    const sp2 = Math.max(0, sp - A_ROLL * k * h) * (1 - K_DRAG * k * h);
-    if (sp2 < V_STOP && !w.pulled[i] && !w.driven[i]) {
+    const bx = fl.beltX[i]!;
+    const by = fl.beltY[i]!;
+    if (bx === 0 && by === 0) {
+      rub(w, i, b, h, fl.roll[i]!, fl.drag[i]!);
+      continue;
+    }
+    // On a conveyor, friction works on the velocity relative to the belt.
+    b.vx -= bx;
+    b.vy -= by;
+    rub(w, i, b, h, fl.roll[i]!, fl.drag[i]!);
+    b.vx += bx;
+    b.vy += by;
+  }
+}
+
+/** Rolling friction and drag for one ball, scaled by the felt under it (mr, md). */
+function rub(w: World, i: number, b: Ball, h: number, mr: number, md: number): void {
+  if (b.kind === 'cue' && (b.eng > 0 || hasSpin(b))) {
+    const skidding = spinFriction(b, h, mr, md);
+    if (!skidding && hyp(b.vx, b.vy) < V_STOP && !w.pulled[i] && !w.driven[i]) {
       b.vx = 0;
       b.vy = 0;
-    } else {
-      const f = sp2 / sp;
-      b.vx *= f;
-      b.vy *= f;
+      clearSpinState(b);
     }
+    return;
+  }
+  const sp = hyp(b.vx, b.vy);
+  if (sp === 0) return;
+  const k = b.braking ? CUE_BRAKE : 1;
+  const sp2 = Math.max(0, sp - A_ROLL * k * mr * h) * (1 - K_DRAG * k * md * h);
+  if (sp2 < V_STOP && !w.pulled[i] && !w.driven[i]) {
+    b.vx = 0;
+    b.vy = 0;
+  } else {
+    const f = sp2 / sp;
+    b.vx *= f;
+    b.vy *= f;
   }
 }

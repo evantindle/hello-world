@@ -33,7 +33,8 @@ import {
   validateTable,
   withoutVertex,
 } from '../../src/geom/table';
-import { castGuide, rayCircle, raySegment } from '../../src/geom/raycast';
+import { compileFloor } from '../../src/geom/parts';
+import { castGuide, rayCircle, raySegment, rayZone } from '../../src/geom/raycast';
 import { makeBall, type Ball } from '../../src/physics/world';
 
 const P = (x: number, y: number) => ({ x, y });
@@ -256,5 +257,67 @@ describe('ray casting', () => {
     expect(guide.kind).toBe('hole');
     expect(guide.pocket?.vid).toBe(side.vid);
     expect(guide.path.y1).toBeCloseTo(side.y + side.rc);
+  });
+
+  it('ray vs a pad: entry point, misses, and a ray that starts on it', () => {
+    const [pad] = compileFloor([
+      { id: 1, kind: 'booster', x: 500, y: 250, dir: { x: 1, y: 0 }, len: 100, wid: 60, kick: 600 },
+    ]).zones;
+    expect(rayZone(300, 250, 1, 0, pad!)).toBeCloseTo(150);
+    expect(rayZone(300, 250, -1, 0, pad!)).toBe(Infinity);
+    expect(rayZone(300, 100, 1, 0, pad!)).toBe(Infinity);
+    expect(rayZone(500, 250, 1, 0, pad!)).toBe(Infinity);
+    // Diagonal: in through the top edge.
+    expect(rayZone(430, 150, Math.SQRT1_2, Math.SQRT1_2, pad!)).toBeCloseTo(70 * Math.SQRT2);
+  });
+
+  const floorTable = (...parts: Parameters<typeof compileFloor>[0]) => {
+    const t = createTable();
+    for (const v of t.verts) v.pocket = false;
+    t.parts = [...parts];
+    return buildGeom(t);
+  };
+
+  it('guide hops through a portal and carries on from the far end', () => {
+    const g = floorTable(
+      { id: 1, kind: 'portal', x: 400, y: 150, link: 2, r: 40 },
+      { id: 2, kind: 'portal', x: 700, y: 350, link: 1, r: 40 },
+    );
+    const cue = cueAt(150, 160);
+    const guide = castGuide(g, [cue], cue, 1, 0);
+    expect(guide.hop).toBeDefined();
+    // In at the entrance's rim, 10 below its centre; out at the same spot on the exit.
+    expect(guide.hop!.path.y1).toBeCloseTo(160);
+    expect(guide.hop!.x - 700).toBeCloseTo(guide.hop!.path.x1 - 400, 9);
+    expect(guide.hop!.y).toBeCloseTo(360);
+    expect(guide.path.x0).toBe(guide.hop!.x);
+    // Then on to the right rail.
+    expect(guide.kind).toBe('rail');
+    expect(guide.path.x1).toBeCloseTo(1000 - 24);
+    expect(guide.path.y1).toBeCloseTo(360);
+  });
+
+  it('guide stops with a question at a speed pad and at a black hole', () => {
+    const pad = floorTable({
+      id: 1,
+      kind: 'booster',
+      x: 500,
+      y: 250,
+      dir: { x: 1, y: 0 },
+      len: 100,
+      wid: 60,
+      kick: 600,
+    });
+    const cue = cueAt(150, 250);
+    const a = castGuide(pad, [cue], cue, 1, 0);
+    expect(a.kind).toBe('boost');
+    expect(a.path.x1).toBeCloseTo(450);
+    const hole = floorTable({ id: 1, kind: 'blackhole', x: 600, y: 250, r: 110, exits: [] });
+    const b = castGuide(hole, [cue], cue, 1, 0);
+    expect(b.kind).toBe('vortex');
+    expect(b.path.x1).toBeCloseTo(490);
+    // Already in the pull: the line runs to the core.
+    const close = cueAt(540, 250);
+    expect(castGuide(hole, [close], close, 1, 0).path.x1).toBeCloseTo(600 - 24);
   });
 });
