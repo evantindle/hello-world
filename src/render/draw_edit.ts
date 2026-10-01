@@ -17,32 +17,31 @@ import type { HandleView } from './draw_table';
  */
 
 /** Under the balls: the starting outline, catch rings, the reach disc. */
-export function drawEditUnder(
-  ctx: CanvasRenderingContext2D,
-  game: Game,
-  fx: Fx,
-  cam: Camera,
-  view: HandleView,
-): void {
+export function drawEditUnder(ctx: CanvasRenderingContext2D, game: Game, fx: Fx, view: HandleView): void {
   if (game.phase !== 'plan') return;
   const t = fx.time;
-  const px = 1 / cam.scale;
   const start = game.editHistory.start;
   const reshaped =
     start !== null &&
     (start.table.verts.length !== game.table.verts.length ||
       start.table.verts.some((v, i) => v.x !== game.table.verts[i]!.x || v.y !== game.table.verts[i]!.y));
   if (start && reshaped) {
-    // Where the rails were when the turn began.
+    // Where the rails were when the turn began: a soft lilac band of dots, nothing like the white
+    // dashes of a ball's path.
+    ctx.save();
     ctx.beginPath();
     start.table.verts.forEach((v, i) => (i === 0 ? ctx.moveTo(v.x, v.y) : ctx.lineTo(v.x, v.y)));
     ctx.closePath();
-    ctx.setLineDash([10 * px * 1.2, 9 * px * 1.2]);
-    ctx.lineDashOffset = -t * 20;
-    ctx.lineWidth = 2.5;
-    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 10;
+    ctx.strokeStyle = 'rgba(199,160,255,0.16)';
     ctx.stroke();
-    ctx.setLineDash([]);
+    ctx.lineCap = 'round';
+    ctx.setLineDash([0.1, 11]);
+    ctx.lineWidth = 4.5;
+    ctx.strokeStyle = 'rgba(214,186,255,0.7)';
+    ctx.stroke();
+    ctx.restore();
   }
   const dragging = game.drag !== null || game.partDrag !== null || view.ghost !== null;
   if (dragging) {

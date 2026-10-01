@@ -13,7 +13,7 @@ import {
 } from '../config';
 import { damp } from '../core/easing';
 import { Emitter } from '../core/emitter';
-import { randomSeed, rngFor, subSeed } from '../core/rng';
+import { randomSeed, rngFor } from '../core/rng';
 import { clamp01, hyp, TAU, wrapTau } from '../core/vec';
 import { ARROW_PARTS, type Dir, type Part } from '../geom/parts';
 import { pointInPolygon } from '../geom/polygon';
@@ -21,6 +21,7 @@ import { castGuide, type Guide, type GuideSpin } from '../geom/raycast';
 import { buildGeom, cloneTable, createTable, type Pocket, type Table, type TableGeom } from '../geom/table';
 import { launchFrom } from '../physics/launch';
 import { createWorld, stepWorld, type Ball, type PhysEvent, type World } from '../physics/world';
+import { Previewer, PREVIEW_T, PREVIEW_T_DRAG, startShot, type Preview } from './preview';
 import { History, type EditSnap } from './history';
 import {
   canTurn,
@@ -230,6 +231,12 @@ export class Game implements ReshapeHost {
   readonly editHistory = new History();
   /** This turn's edits so far, as replayable data (recorded with the stroke). */
   edits: Edit[] = [];
+  /** The chain preview of the shot to come (rules with preview 'chain'). */
+  readonly previewer = new Previewer();
+  /** Real seconds in the plan phase, and when the last preview was started (to pace them while
+   * something is being dragged). */
+  private previewClock = 0;
+  private previewStarted = -1;
   lastOver: GameOverInfo | null = null;
   /** The state just before the edit in progress, and the edit being recorded. */
   private editBefore: EditSnap | null = null;
@@ -422,7 +429,6 @@ export class Game implements ReshapeHost {
         this.shots++;
         break;
       case 'sim': {
-        this.world = createWorld(this.balls, this.geom, subSeed(this.seed, 'world', this.shots));
         this.acc = 0;
         this.potted = [];
         this.scratched = false;
@@ -438,7 +444,8 @@ export class Game implements ReshapeHost {
           edits: this.edits.slice(),
           pre: snapState(this),
         };
-        const { dx, dy, speed } = launchFrom(cue, this.shot);
+        const { world, dx, dy, speed } = startShot(this.balls, this.geom, this.seed, this.shots, this.shot);
+        this.world = world;
         this.events.emit('strike', { power: this.strikePower, x: cue.x, y: cue.y, dx, dy, speed });
         break;
       }
@@ -485,6 +492,7 @@ export class Game implements ReshapeHost {
       }
       case 'plan':
         this.phaseT += dtReal;
+        if (this.rules.preview === 'chain') this.updatePreview(dtReal);
         if (this.charging) {
           this.chargeT += dtReal;
           if (this.chargeT >= this.windup) {
@@ -520,6 +528,62 @@ export class Game implements ReshapeHost {
         this.phaseT += dtReal;
         break;
     }
+  }
+
+  // ------------------------------------------------------------------ chain preview
+
+  /** What decides the next shot's outcome, as a cache key. */
+  private previewKey(horizon: number): string {
+    return [
+      hashBoard(this.table, this.balls),
+      this.hunger,
+      this.seed,
+      this.shots,
+      this.aim,
+      this.dialQ,
+      this.rules.english ? this.englishX : 0,
+      this.rules.english ? this.englishY : 0,
+      horizon,
+    ].join('|');
+  }
+
+  /** The chain preview to draw right now (null if this game does not show one). */
+  get preview(): Preview | null {
+    return this.rules.preview === 'chain' && this.phase === 'plan' ? this.previewer.current : null;
+  }
+
+  private updatePreview(dtReal: number): void {
+    this.previewClock += dtReal;
+    const dragging = this.drag !== null || this.partDrag !== null;
+    const horizon = dragging ? PREVIEW_T_DRAG : PREVIEW_T;
+    const key = this.previewKey(horizon);
+    // While something is being dragged the shot changes every frame: start a fresh preview at most
+    // every 50 ms (the last one stays up meanwhile).
+    const stale = this.previewer.current?.key !== key && this.previewer.pendingKey !== key;
+    if (stale && dragging && this.previewClock - this.previewStarted < 0.05) return;
+    const before = this.previewer.pendingKey;
+    // A smaller slice of each frame when frames are already slow.
+    const budget = dtReal > 1 / 50 ? 1.5 : 3;
+    this.previewer.update(key, () => this.previewInput(key, horizon), budget);
+    if (this.previewer.pendingKey !== before) this.previewStarted = this.previewClock;
+  }
+
+  private previewInput(key: string, horizon: number) {
+    const eng = this.rules.english;
+    return {
+      key,
+      geom: this.geom,
+      balls: this.balls,
+      seed: this.seed,
+      stroke: this.shots + 1,
+      shot: quantizeShot(this.aim, this.dial, eng ? this.englishX : 0, eng ? this.englishY : 0),
+      horizon,
+    };
+  }
+
+  /** The whole preview of the shot to come, worked out now (tests, tools). */
+  previewNow(horizon = PREVIEW_T): Preview {
+    return this.previewer.compute(this.previewInput(this.previewKey(horizon), horizon));
   }
 
   private updateSim(dt: number, dtReal: number): void {
@@ -963,7 +1027,7 @@ export class Game implements ReshapeHost {
 
   /** Toys that show a turning knob right now: the ones a player could turn. */
   turnable(): number[] {
-    return this.table.parts.filter((p) => canTurn(p, this.rules.arrows)).map((p) => p.id);
+    return this.table.parts.filter((p) => canTurn(p)).map((p) => p.id);
   }
 
   hitPart(x: number, y: number, radius: number, knobs: readonly number[] = this.turnable()): PartHandle | null {
@@ -977,7 +1041,7 @@ export class Game implements ReshapeHost {
     py = q64(py);
     const p = this.table.parts.find((q) => q.id === id);
     if (!p) return false;
-    if (p.locked || (turn && !canTurn(p, this.rules.arrows))) {
+    if (p.locked || (turn && !canTurn(p))) {
       this.events.emit('partBlocked', { id, reason: 'locked', x: p.x, y: p.y });
       return false;
     }

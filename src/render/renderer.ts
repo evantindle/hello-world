@@ -7,6 +7,7 @@ import { drawBalls, drawBallShadows, star } from './draw_balls';
 import { drawCue, drawGuide, drawSpeedLines } from './draw_cue';
 import { drawEditOver, drawEditUnder } from './draw_edit';
 import { drawFloorParts } from './draw_floor';
+import { drawPreviewOver, drawPreviewUnder } from './draw_preview';
 import { drawPartShadows, drawRaisedParts } from './draw_parts';
 import { buildVisual, drawHandles, drawPockets, drawTableBody, type HandleView } from './draw_table';
 
@@ -47,14 +48,19 @@ export class Renderer {
     drawPockets(ctx, game, fx);
     drawFloorParts(ctx, game, fx, cam, vt);
     const view = this.view();
-    drawEditUnder(ctx, game, fx, cam, view);
-    const guide = game.phase === 'plan' ? game.guide() : undefined;
-    drawGuide(ctx, game, fx, cam, 'under', guide);
+    drawEditUnder(ctx, game, fx, view);
+    // Free Play and the Toy Box show the whole chain; elsewhere, the one honest guide line.
+    const chain = game.rules.preview === 'chain';
+    const preview = game.preview;
+    const guide = game.phase === 'plan' && !chain ? game.guide() : undefined;
+    if (preview) drawPreviewUnder(ctx, game, fx, preview);
+    else if (!chain) drawGuide(ctx, game, fx, cam, 'under', guide);
     drawPartShadows(ctx, game, cam);
     drawBallShadows(ctx, game, fx, cam);
     drawRaisedParts(ctx, game, fx, cam);
     drawBalls(ctx, game, fx, cam);
-    drawGuide(ctx, game, fx, cam, 'over', guide);
+    if (preview) drawPreviewOver(ctx, game, fx, cam, preview);
+    else if (!chain) drawGuide(ctx, game, fx, cam, 'over', guide);
     drawSpeedLines(ctx, fx);
     drawCue(ctx, game, fx, cam);
     drawHandles(ctx, game, fx, vt, view, cam);

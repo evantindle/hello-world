@@ -1,9 +1,9 @@
 import { H } from '../config';
-import { subSeed } from '../core/rng';
 import { buildGeom, cloneTable } from '../geom/table';
-import { launchFrom, type ShotQ } from '../physics/launch';
+import type { ShotQ } from '../physics/launch';
 import type { TurnLog } from '../physics/log';
-import { createWorld, stepWorld, type PhysEvent } from '../physics/world';
+import { stepWorld, type PhysEvent } from '../physics/world';
+import { startShot } from './preview';
 import { hashBoard, type GameState } from './serialize';
 
 /**
@@ -64,9 +64,7 @@ export function simulateShot(pre: GameState, shot: ShotQ, maxSteps = 6000) {
   const table = cloneTable(pre.table);
   const geom = buildGeom(table, pre.hunger);
   const balls = pre.balls.map((b) => ({ ...b }));
-  const world = createWorld(balls, geom, subSeed(pre.seed, 'world', pre.shots));
-  const cue = balls.find((b) => b.kind === 'cue')!;
-  launchFrom(cue, shot);
+  const { world } = startShot(balls, geom, pre.seed, pre.shots, shot);
   const events: PhysEvent[] = [];
   for (let i = 0; i < maxSteps && !world.stopped; i++) stepWorld(world, H, events);
   return { table, balls, world, events, hash: hashBoard(table, balls) };

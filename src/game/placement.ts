@@ -1,7 +1,6 @@
 import { BLACKHOLE_CORE, R } from '../config';
 import { hyp } from '../core/vec';
 import {
-  ARROW_PARTS,
   arcPoints,
   compileFloor,
   compileParts,
@@ -93,10 +92,9 @@ export function hasDir(p: Part): boolean {
   return 'dir' in p || p.kind === 'arc';
 }
 
-/** Whether rules allowing `arrows` let a player turn this toy (arrows only in the Toy Box). */
-export function canTurn(p: Part, arrows: 'fixed' | 'random' | 'free'): boolean {
-  if (p.locked || !hasDir(p)) return false;
-  return arrows === 'free' || !ARROW_PARTS.includes(p.kind);
+/** Whether a player may turn this toy: anything with a direction that the level did not fix. */
+export function canTurn(p: Part): boolean {
+  return !p.locked && hasDir(p);
 }
 
 // ---------------------------------------------------------------- shapes

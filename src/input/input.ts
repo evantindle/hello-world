@@ -1,7 +1,7 @@
 import { R } from '../config';
 import type { Vec } from '../core/vec';
 import type { Game } from '../game/game';
-import type { PartHandle } from '../game/placement';
+import { partTurn, type PartHandle } from '../game/placement';
 import type { Handle } from '../game/reshape';
 import { pointInPolygon } from '../geom/polygon';
 import type { Camera } from '../render/camera';
@@ -19,8 +19,10 @@ export interface InputHooks {
  * Pointer + keyboard. One active pointer at a time. In the plan phase: grab knobs and "+"
  * handles to bend the table (double-tap a bend to remove it), drag toys around, turn them by their
  * knob, carry new ones out of the tray (and drop them back in it). Tapping bare felt pokes it.
+ * The mouse wheel over a toy (or Q / E for the selected one) turns it too.
  * Keys: Space/Enter shoots, arrows turn the power dial (Shift for big steps), Esc cancels a
- * windup, Z/Backspace undoes, Y or Shift+Z redoes, R resets the turn's edits, M mutes.
+ * windup, Z/Backspace undoes, Y or Shift+Z redoes, R resets the turn's edits, Q/E turn the selected
+ * toy (Shift for fine steps), M mutes.
  */
 export class Input {
   hover: Handle | null = null;
@@ -38,6 +40,8 @@ export class Input {
   private placing: number | null = null;
   private ghost: { item: number; x: number; y: number; ok: boolean } | null = null;
   private stowing = false;
+  /** A toy being turned by the wheel or Q/E: the turn stays one edit until things go quiet. */
+  private nudge: { id: number; timer: number } | null = null;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -46,6 +50,7 @@ export class Input {
     private readonly hooks: InputHooks,
   ) {
     canvas.addEventListener('pointerdown', this.down);
+    canvas.addEventListener('wheel', this.wheel, { passive: false });
     canvas.addEventListener('pointermove', this.move);
     canvas.addEventListener('pointerleave', () => {
       if (this.mode === 'none') {
@@ -129,6 +134,7 @@ export class Input {
   private readonly down = (e: PointerEvent): void => {
     this.hooks.gesture();
     if (this.active !== null) return;
+    this.endNudge();
     const g = this.game;
     const p = this.toWorld(e);
     this.pointer = p;
@@ -239,6 +245,42 @@ export class Input {
     this.release();
   };
 
+  /** The wheel over a toy that can turn: 5 degrees a notch. */
+  private readonly wheel = (e: WheelEvent): void => {
+    const g = this.game;
+    if (!g.canReshape || this.active !== null) return;
+    const p = this.toWorld(e as unknown as PointerEvent);
+    const ph = g.hitPart(p.x, p.y, this.hitRadius(false), this.knobs());
+    const id = this.nudge?.id ?? ph?.id ?? null;
+    if (id === null || !g.turnable().includes(id)) return;
+    e.preventDefault();
+    if (e.deltaY === 0) return;
+    this.selected = id;
+    this.turnBy(id, e.deltaY > 0 ? 1 : -1);
+  };
+
+  /** Turn toy `id` by `steps` 5-degree steps, as part of one ongoing nudge. */
+  private turnBy(id: number, steps: number): void {
+    const g = this.game;
+    if (this.nudge && this.nudge.id !== id) this.endNudge();
+    if (!this.nudge) {
+      const part = g.table.parts.find((q) => q.id === id);
+      if (!part || !g.beginPartDrag(id, part.x, part.y, true)) return;
+      this.nudge = { id, timer: 0 };
+    }
+    const part = g.table.parts.find((q) => q.id === id);
+    if (part) g.turnPartTo(partTurn(part) + steps);
+    window.clearTimeout(this.nudge.timer);
+    this.nudge.timer = window.setTimeout(() => this.endNudge(), 500);
+  }
+
+  private endNudge(): void {
+    if (!this.nudge) return;
+    window.clearTimeout(this.nudge.timer);
+    this.nudge = null;
+    this.game.endPartDrag();
+  }
+
   private release() {
     this.active = null;
     this.mode = 'none';
@@ -268,11 +310,20 @@ export class Input {
       e.preventDefault();
       if (g.phase === 'plan' && !g.charging) g.nudgeDial(e.shiftKey ? -0.1 : -0.02);
     } else if ((e.code === 'KeyZ' && e.shiftKey) || e.code === 'KeyY') {
+      this.endNudge();
       if (g.redo()) e.preventDefault();
     } else if (e.code === 'KeyZ' || e.code === 'Backspace') {
+      this.endNudge();
       if (g.undo()) e.preventDefault();
     } else if (e.code === 'KeyR' && !e.ctrlKey && !e.metaKey) {
+      this.endNudge();
       if (g.reset()) e.preventDefault();
+    } else if ((e.code === 'KeyQ' || e.code === 'KeyE') && !e.ctrlKey && !e.metaKey) {
+      const id = this.selected ?? this.partHover?.id ?? null;
+      if (id !== null && g.canReshape && g.turnable().includes(id)) {
+        e.preventDefault();
+        this.turnBy(id, (e.code === 'KeyE' ? 1 : -1) * (e.shiftKey ? 1 : 3));
+      }
     } else if (e.code === 'KeyM') {
       this.hooks.toggleMute();
     }

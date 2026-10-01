@@ -46,7 +46,8 @@ export interface Ruleset {
   english: boolean;
   /** 'guide': one honest line to first contact. 'chain': the full multi-ball preview. */
   preview: 'guide' | 'chain';
-  /** How arrow parts (boosters, fans, gates) get their direction when placed. */
+  /** Which way arrow parts (boosters, fans, gates) face when put down: the tray's direction
+   * ('fixed', 'free') or spun at random. Every toy can be turned afterwards either way. */
   arrows: 'fixed' | 'random' | 'free';
   /** Toy Box: undo a whole shot. */
   rewind: boolean;
@@ -75,12 +76,13 @@ export const V1_RULES: Readonly<Ruleset> = {
   stars: null,
 };
 
-/** v2 Free Play: v1 plus bolted scratches, English and the chain preview. */
+/** v2 Free Play: v1 plus bolted scratches, English, the chain preview and toys you turn yourself. */
 export const FREE_RULES: Readonly<Ruleset> = {
   ...V1_RULES,
   boltOnScratch: true,
   english: true,
   preview: 'chain',
+  arrows: 'free',
 };
 
 /** Toy Box: no limits, no score, every toy. */

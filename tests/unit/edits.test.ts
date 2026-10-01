@@ -198,33 +198,43 @@ describe('the tray', () => {
     expect(g.tray[0]!.count).toBe(1);
   });
 
-  it('spins arrows at random in Free Play, but the same way again after an undo', () => {
-    const g = planning(FREE_RULES);
+  it('spins arrows at random when the rules say so, but the same way again after an undo', () => {
+    const g = planning({ ...FREE_RULES, arrows: 'random' });
     const d = g.placementDir(1)!;
     g.placeFromTray(1, 500, 250);
     const placed = g.table.parts[0] as Part & { kind: 'booster' };
     expect(placed.dir).toEqual(d);
     g.undo();
     expect(g.placementDir(1)).toEqual(d);
-    // Fixed arrows keep the tray's direction.
-    const c = planning({ ...TOKENS, arrows: 'fixed' });
-    expect(c.placementDir(1)).toEqual({ x: 1, y: 0 });
+    // Otherwise toys come out facing the tray's way.
+    expect(planning(FREE_RULES).placementDir(1)).toEqual({ x: 1, y: 0 });
+    expect(planning({ ...TOKENS, arrows: 'fixed' }).placementDir(1)).toEqual({ x: 1, y: 0 });
   });
 
-  it('turns walls in Free Play but arrows only in the Toy Box', () => {
+  it('turns every toy that has a direction; round ones have nothing to turn', () => {
     const g = planning(FREE_RULES);
     g.placeFromTray(0, 500, 250);
     g.placeFromTray(1, 300, 380);
-    const [wall, pad] = g.table.parts;
-    expect(g.turnable()).toEqual([wall!.id]);
-    expect(g.beginPartDrag(pad!.id, pad!.x, pad!.y, true)).toBe(false);
+    g.placeFromTray(2, 760, 120);
+    const [wall, pad, bumper] = g.table.parts;
+    expect(g.turnable()).toEqual([wall!.id, pad!.id]);
+    expect(g.beginPartDrag(bumper!.id, bumper!.x, bumper!.y, true)).toBe(false);
+    expect(g.beginPartDrag(pad!.id, pad!.x, pad!.y, true)).toBe(true);
+    g.turnPartTo(18);
+    g.endPartDrag();
+    expect((g.table.parts[1] as Part & { kind: 'booster' }).dir).toEqual({ x: 0, y: 1000 });
     expect(g.beginPartDrag(wall!.id, wall!.x, wall!.y, true)).toBe(true);
     g.turnPartTo(9);
     g.endPartDrag();
     expect((g.table.parts[0] as Part & { kind: 'stub' }).dir).toEqual({ x: 707, y: 707 });
-    const t = planning(TOYBOX_RULES);
-    t.placeFromTray(1, 300, 380);
-    expect(t.turnable()).toHaveLength(1);
+    // A toy the level fixed in place does not turn.
+    const t = planning(TOYBOX_RULES, {
+      table: {
+        ...structuredClone(g.editHistory.start!.table),
+        parts: [{ ...structuredClone(wall!), locked: true }],
+      },
+    });
+    expect(t.turnable()).toEqual([]);
   });
 });
 
