@@ -584,6 +584,15 @@ export interface HandleView {
   dragVid: number | null;
   /** Show the first-turn "DRAG ME!" tutorial tag. */
   tutorial: boolean;
+  /** The toy under the pointer, and the one last touched (both show their turning knobs). */
+  partHover: number | null;
+  partSelected: number | null;
+  /** The toy whose turning knob is under the pointer. */
+  knobHover: number | null;
+  /** A toy being dragged out of the tray: which item, where, and whether it would fit there. */
+  ghost: { item: number; x: number; y: number; ok: boolean } | null;
+  /** The toy being dragged would go back into the tray if let go now. */
+  stowing: boolean;
 }
 
 const KNOB_R = 18;

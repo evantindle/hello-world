@@ -5,6 +5,7 @@ import type { Game } from '../game/game';
 import type { Camera } from './camera';
 import { drawBalls, drawBallShadows, star } from './draw_balls';
 import { drawCue, drawGuide, drawSpeedLines } from './draw_cue';
+import { drawEditOver, drawEditUnder } from './draw_edit';
 import { drawFloorParts } from './draw_floor';
 import { drawPartShadows, drawRaisedParts } from './draw_parts';
 import { buildVisual, drawHandles, drawPockets, drawTableBody, type HandleView } from './draw_table';
@@ -45,6 +46,8 @@ export class Renderer {
     drawTableBody(ctx, game, fx, vt, cam);
     drawPockets(ctx, game, fx);
     drawFloorParts(ctx, game, fx, cam, vt);
+    const view = this.view();
+    drawEditUnder(ctx, game, fx, cam, view);
     const guide = game.phase === 'plan' ? game.guide() : undefined;
     drawGuide(ctx, game, fx, cam, 'under', guide);
     drawPartShadows(ctx, game, cam);
@@ -54,7 +57,8 @@ export class Renderer {
     drawGuide(ctx, game, fx, cam, 'over', guide);
     drawSpeedLines(ctx, fx);
     drawCue(ctx, game, fx, cam);
-    drawHandles(ctx, game, fx, vt, this.view(), cam);
+    drawHandles(ctx, game, fx, vt, view, cam);
+    drawEditOver(ctx, game, fx, cam, view);
     drawParticles(ctx, fx, cam.upright);
     fx.pops.draw(ctx, cam.upright);
 

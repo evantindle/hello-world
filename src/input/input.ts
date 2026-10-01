@@ -1,7 +1,9 @@
 import { R } from '../config';
 import type { Vec } from '../core/vec';
 import type { Game } from '../game/game';
+import type { PartHandle } from '../game/placement';
 import type { Handle } from '../game/reshape';
+import { pointInPolygon } from '../geom/polygon';
 import type { Camera } from '../render/camera';
 import type { HandleView } from '../render/draw_table';
 
@@ -9,22 +11,33 @@ export interface InputHooks {
   /** First gesture: unlock audio. */
   gesture: () => void;
   toggleMute: () => void;
+  /** Whether a screen point (client px) is over the tray: drop a toy there to put it back. */
+  overTray?: (cx: number, cy: number) => boolean;
 }
 
 /**
  * Pointer + keyboard. One active pointer at a time. In the plan phase: grab knobs and "+"
- * handles to bend the table, double-tap a bend to remove it. Tapping bare felt pokes it.
+ * handles to bend the table (double-tap a bend to remove it), drag toys around, turn them by their
+ * knob, carry new ones out of the tray (and drop them back in it). Tapping bare felt pokes it.
  * Keys: Space/Enter shoots, arrows turn the power dial (Shift for big steps), Esc cancels a
- * windup, Z/Backspace undoes, M mutes.
+ * windup, Z/Backspace undoes, Y or Shift+Z redoes, R resets the turn's edits, M mutes.
  */
 export class Input {
   hover: Handle | null = null;
+  /** The toy (or turning knob) under the pointer. */
+  partHover: PartHandle | null = null;
+  /** The toy last touched: it keeps showing its turning knob. */
+  selected: number | null = null;
   pointer: Vec | null = null;
   private active: number | null = null;
-  private mode: 'none' | 'drag' = 'none';
+  private mode: 'none' | 'drag' | 'part' | 'place' = 'none';
   private lastTap = { t: 0, vid: -1 };
   /** Until the player bends something, the first plan phase shows a "DRAG ME!" tag. */
   private tutorial = true;
+  /** The tray item being carried, and where its ghost is (none while over the tray itself). */
+  private placing: number | null = null;
+  private ghost: { item: number; x: number; y: number; ok: boolean } | null = null;
+  private stowing = false;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -37,6 +50,7 @@ export class Input {
     canvas.addEventListener('pointerleave', () => {
       if (this.mode === 'none') {
         this.hover = null;
+        this.partHover = null;
         this.pointer = null;
       }
     });
@@ -44,6 +58,9 @@ export class Input {
     window.addEventListener('pointercancel', this.cancel);
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     window.addEventListener('keydown', this.keydown);
+    game.events.on('phase', ({ to }) => {
+      if (to !== 'plan') this.selected = null;
+    });
   }
 
   endTutorial(): void {
@@ -52,11 +69,17 @@ export class Input {
 
   view(): HandleView {
     const h = this.hover;
+    const ph = this.partHover;
     return {
       hoverKind: this.mode === 'none' && h ? h.kind : null,
       hoverIndex: h ? h.index : -1,
       dragVid: this.game.drag ? this.game.drag.vid : null,
       tutorial: this.tutorial,
+      partHover: this.mode === 'none' && ph ? ph.id : null,
+      partSelected: this.game.canReshape ? this.selected : null,
+      knobHover: this.mode === 'none' && ph?.kind === 'part-rot' ? ph.id : null,
+      ghost: this.ghost,
+      stowing: this.stowing,
     };
   }
 
@@ -67,6 +90,40 @@ export class Input {
 
   private hitRadius(touch: boolean): number {
     return Math.max(R * 1.15, (touch ? 30 : 20) / this.cam.scale);
+  }
+
+  /** Turning knobs show (and can be grabbed) on the hovered and the selected toy. */
+  private knobs(): number[] {
+    const show = [this.selected, this.partHover?.id ?? null];
+    return this.game.turnable().filter((id) => show.includes(id));
+  }
+
+  /** The tray started a drag: carry the toy over the table. */
+  beginPlace(item: number, e: PointerEvent): void {
+    this.hooks.gesture();
+    const g = this.game;
+    if (this.active !== null || !g.canReshape || (g.tray[item]?.count ?? 0) <= 0) return;
+    this.active = e.pointerId;
+    this.mode = 'place';
+    this.placing = item;
+    this.hover = null;
+    this.partHover = null;
+    try {
+      this.canvas.setPointerCapture(e.pointerId);
+    } catch {
+      // Synthetic events (tests) cannot be captured; window listeners still see the release.
+    }
+    this.canvas.style.cursor = 'grabbing';
+    this.updateGhost(e);
+  }
+
+  private updateGhost(e: PointerEvent): void {
+    const item = this.placing;
+    if (item === null) return;
+    const p = this.toWorld(e);
+    this.pointer = p;
+    const over = this.hooks.overTray?.(e.clientX, e.clientY) ?? false;
+    this.ghost = over ? null : { item, x: p.x, y: p.y, ok: this.game.canPlace(item, p.x, p.y) };
   }
 
   private readonly down = (e: PointerEvent): void => {
@@ -80,7 +137,14 @@ export class Input {
       return;
     }
     if (g.phase !== 'plan' || g.charging) return;
-    const h = g.hitHandle(p.x, p.y, this.hitRadius(e.pointerType !== 'mouse'));
+    const r = this.hitRadius(e.pointerType !== 'mouse');
+    const ph = g.hitPart(p.x, p.y, r, this.knobs());
+    if (ph?.kind === 'part-rot') {
+      this.selected = ph.id;
+      if (g.beginPartDrag(ph.id, p.x, p.y, true)) this.capture(e, 'part');
+      return;
+    }
+    const h = g.hitHandle(p.x, p.y, r);
     if (h) {
       if (h.kind === 'vertex' && !h.pocket) {
         const vid = g.table.verts[h.index]!.id;
@@ -92,16 +156,23 @@ export class Input {
         }
         this.lastTap = { t: now, vid };
       }
-      if (g.beginDrag(h, p.x, p.y)) this.capture(e);
+      if (g.beginDrag(h, p.x, p.y)) this.capture(e, 'drag');
       return;
     }
+    if (ph) {
+      this.selected = ph.id;
+      if (g.beginPartDrag(ph.id, p.x, p.y, false)) this.capture(e, 'part');
+      return;
+    }
+    this.selected = null;
     g.poke(p.x, p.y);
   };
 
-  private capture(e: PointerEvent) {
+  private capture(e: PointerEvent, mode: 'drag' | 'part') {
     this.active = e.pointerId;
-    this.mode = 'drag';
+    this.mode = mode;
     this.hover = null;
+    this.partHover = null;
     try {
       this.canvas.setPointerCapture(e.pointerId);
     } catch {
@@ -110,34 +181,70 @@ export class Input {
     this.canvas.style.cursor = 'grabbing';
   }
 
+  /** Letting go of the dragged toy here would put it back in the tray. */
+  private wouldStow(e: PointerEvent, p: Vec): boolean {
+    const s = this.game.partDrag;
+    if (!s || s.turn) return false;
+    const part = this.game.table.parts.find((q) => q.id === s.id);
+    if (!part || part.placed === undefined) return false;
+    return (
+      !pointInPolygon(p.x, p.y, this.game.geom.poly) || (this.hooks.overTray?.(e.clientX, e.clientY) ?? false)
+    );
+  }
+
   private readonly move = (e: PointerEvent): void => {
     const p = this.toWorld(e);
     this.pointer = p;
-    if (this.mode === 'drag' && e.pointerId === this.active) {
-      this.game.dragTo(p.x, p.y);
+    if (e.pointerId === this.active) {
+      if (this.mode === 'drag') this.game.dragTo(p.x, p.y);
+      else if (this.mode === 'part') {
+        this.game.partDragTo(p.x, p.y);
+        this.stowing = this.wouldStow(e, p);
+      } else if (this.mode === 'place') this.updateGhost(e);
       return;
     }
     if (this.mode !== 'none') return;
     const g = this.game;
-    this.hover = g.hitHandle(p.x, p.y, this.hitRadius(e.pointerType !== 'mouse'));
-    this.canvas.style.cursor = this.hover ? 'grab' : g.phase === 'spin' ? 'pointer' : 'default';
+    const r = this.hitRadius(e.pointerType !== 'mouse');
+    this.hover = g.hitHandle(p.x, p.y, r);
+    const ph = g.hitPart(p.x, p.y, r, this.knobs());
+    // A turning knob beats a table knob; a table knob beats a toy's body.
+    this.partHover = ph && (ph.kind === 'part-rot' || !this.hover) ? ph : null;
+    if (this.partHover?.kind === 'part-rot') this.hover = null;
+    this.canvas.style.cursor =
+      this.hover || this.partHover ? 'grab' : g.phase === 'spin' ? 'pointer' : 'default';
   };
 
   private readonly up = (e: PointerEvent): void => {
     if (e.pointerId !== this.active) return;
-    if (this.mode === 'drag') this.game.endDrag();
+    const g = this.game;
+    if (this.mode === 'drag') g.endDrag();
+    else if (this.mode === 'part') g.endPartDrag(this.wouldStow(e, this.toWorld(e)));
+    else if (this.mode === 'place' && this.ghost) {
+      const n = g.table.parts.length;
+      if (this.ghost.ok && g.placeFromTray(this.ghost.item, this.ghost.x, this.ghost.y)) {
+        this.selected = g.table.parts[n]?.id ?? null;
+      } else if (!this.ghost.ok) {
+        // Let the game say why.
+        g.placeFromTray(this.ghost.item, this.ghost.x, this.ghost.y);
+      }
+    }
     this.release();
   };
 
   private readonly cancel = (e: PointerEvent): void => {
     if (e.pointerId !== this.active) return;
     if (this.mode === 'drag') this.game.endDrag();
+    else if (this.mode === 'part') this.game.endPartDrag();
     this.release();
   };
 
   private release() {
     this.active = null;
     this.mode = 'none';
+    this.placing = null;
+    this.ghost = null;
+    this.stowing = false;
     this.canvas.style.cursor = 'default';
   }
 
@@ -160,8 +267,12 @@ export class Input {
     } else if (e.code === 'ArrowDown' || e.code === 'ArrowLeft') {
       e.preventDefault();
       if (g.phase === 'plan' && !g.charging) g.nudgeDial(e.shiftKey ? -0.1 : -0.02);
+    } else if ((e.code === 'KeyZ' && e.shiftKey) || e.code === 'KeyY') {
+      if (g.redo()) e.preventDefault();
     } else if (e.code === 'KeyZ' || e.code === 'Backspace') {
       if (g.undo()) e.preventDefault();
+    } else if (e.code === 'KeyR' && !e.ctrlKey && !e.metaKey) {
+      if (g.reset()) e.preventDefault();
     } else if (e.code === 'KeyM') {
       this.hooks.toggleMute();
     }

@@ -2,11 +2,18 @@ import { BALL_COLORS, GAME_TITLE } from '../config';
 import type { Game, GameOverInfo } from '../game/game';
 import { PowerDial } from './widgets/dial';
 import { SpinWidget } from './widgets/spin';
+import { TrayWidget } from './widgets/tray';
 
 const ICON_SOUND =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path d="M16 8.5c1.2 1 1.8 2.2 1.8 3.5s-.6 2.5-1.8 3.5M18.5 6c2 1.6 3 3.6 3 6s-1 4.4-3 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
 const ICON_MUTED =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path d="M16.5 9.5l5 5m0-5l-5 5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>';
+const ICON_UNDO =
+  '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>';
+const ICON_REDO =
+  '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 14 5-5-5-5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>';
+const ICON_RESET =
+  '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.4-5.7" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/><path d="M4 4v5h5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const ICON_RESTART =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12a7 7 0 1 0 2.1-5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M4 3.5v5h5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
@@ -19,6 +26,8 @@ export interface HudHooks {
   press: () => void;
   /** The English dot was dragged onto the cue ball's eye. */
   ouch: () => void;
+  /** A toy was pressed in the tray: start carrying it over the table. */
+  beginPlace: (item: number, e: PointerEvent) => void;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -51,6 +60,11 @@ export class Hud {
   private stretchFill: HTMLElement;
   private stretchNum: HTMLElement;
   private undo: HTMLButtonElement;
+  private redo: HTMLButtonElement;
+  private reset: HTMLButtonElement;
+  private tokens: HTMLElement;
+  private lastTokens = '';
+  readonly tray: TrayWidget;
   private cluster: HTMLElement;
   private dial: PowerDial;
   private spin: SpinWidget;
@@ -113,17 +127,31 @@ export class Hud {
 
     const bottom = el('div', 'hud-bottom');
     this.stretch = el('div', 'stretch');
-    this.undo = el('button', 'btn undo', 'UNDO') as HTMLButtonElement;
-    this.undo.title = 'Undo this turn’s bending (Z)';
-    this.undo.addEventListener('click', () => {
-      this.hooks.gesture();
-      this.game.undo();
-    });
+    const editBtn = (cls: string, icon: string, label: string, title: string, act: () => void) => {
+      const b = el('button', `btn edit ${cls}`, `${icon}<span>${label}</span>`) as HTMLButtonElement;
+      b.title = title;
+      b.setAttribute('aria-label', label);
+      b.addEventListener('click', () => {
+        this.hooks.gesture();
+        act();
+      });
+      return b;
+    };
+    this.undo = editBtn('undo', ICON_UNDO, 'UNDO', 'Undo (Z)', () => this.game.undo());
+    this.redo = editBtn('redo', ICON_REDO, 'REDO', 'Redo (Y)', () => this.game.redo());
+    this.reset = editBtn('reset', ICON_RESET, 'RESET', 'Put the table back how this turn began (R)', () => this.game.reset());
+    const edits = el('div', 'edits');
+    edits.append(this.undo, this.redo, this.reset);
     const meter = el('div', 'meter');
     this.stretchFill = el('div', 'meter-fill');
     this.stretchNum = el('div', 'meter-num', '');
     meter.append(this.stretchFill, el('div', 'meter-label', 'STRETCH'), this.stretchNum);
-    this.stretch.append(this.undo, meter);
+    this.tokens = el('div', 'tokens');
+    this.stretch.append(edits, meter, this.tokens);
+    this.tray = new TrayWidget({
+      items: () => this.game.tray,
+      begin: (item, e) => this.hooks.beginPlace(item, e),
+    });
     this.hint = el('div', 'hint');
     this.dial = new PowerDial({
       get: () => this.game.dial,
@@ -144,7 +172,7 @@ export class Hud {
     this.title = this.buildTitle();
     this.over = el('div', 'overlay over hidden');
 
-    root.append(top, this.hunger, this.banner, this.toasts, bottom, this.title, this.over);
+    root.append(top, this.hunger, this.banner, this.toasts, this.tray.el, bottom, this.title, this.over);
     this.syncMute();
   }
 
@@ -171,12 +199,23 @@ export class Hud {
     return o;
   }
 
-  /** CSS px the top and bottom HUD bars take up (the camera keeps the table clear of them). */
-  bands(): { top: number; bottom: number } {
+  /**
+   * CSS px the HUD takes up along each edge (the camera keeps the table clear of them): the top
+   * and bottom bars, the toy tray (a column on the left, or a row along the bottom), and the
+   * shoot controls' box in the bottom-right corner.
+   */
+  bands(): { top: number; bottom: number; left: number; cluster: DOMRect } {
     const root = this.hint.parentElement!.parentElement!;
     const top = root.querySelector('.hud-top')!.getBoundingClientRect();
     const bottom = root.querySelector('.hud-bottom')!.getBoundingClientRect();
-    return { top: top.bottom, bottom: Math.max(0, window.innerHeight - bottom.top) };
+    let left = 0;
+    let low = Math.max(0, window.innerHeight - bottom.top);
+    if (this.tray.el.classList.contains('has')) {
+      const t = this.tray.el.getBoundingClientRect();
+      if (t.height > t.width) left = t.right;
+      else low = Math.max(low, window.innerHeight - t.top);
+    }
+    return { top: top.bottom, bottom: low, left, cluster: this.cluster.getBoundingClientRect() };
   }
 
   refreshMute(): void {
@@ -220,6 +259,20 @@ export class Hud {
     this.stretchFill.classList.toggle('low', frac < 0.25);
     this.stretchNum.textContent = planning && budgeted ? String(Math.round(g.budget)) : '';
     this.undo.disabled = !g.canUndo;
+    this.redo.disabled = !g.canRedo;
+    this.reset.disabled = !g.canReset;
+    // Grab tokens: one pip per token the level gives, filled while unspent.
+    const tokenText = lim.kind === 'tokens' ? `${g.tokens}/${lim.tokens}` : '';
+    if (tokenText !== this.lastTokens) {
+      this.lastTokens = tokenText;
+      if (lim.kind === 'tokens') {
+        const pips = Array.from({ length: lim.tokens }, (_, i) => `<i class="${i < g.tokens ? 'on' : ''}"></i>`).join('');
+        this.tokens.innerHTML = `<span class="tokens-label">GRABS</span><span class="tokens-pips">${pips}</span>`;
+        this.tokens.title = `${g.tokens} of ${lim.tokens} grabs left`;
+      } else this.tokens.innerHTML = '';
+    }
+    this.stretch.classList.toggle('tokened', lim.kind === 'tokens');
+    this.tray.update(planning);
     this.cluster.classList.toggle('show', planning);
     this.dial.button.classList.toggle('show', planning);
     this.dial.update(g.dial, g.charging, g.power);
@@ -231,6 +284,8 @@ export class Hud {
     let hint = '';
     if (g.phase === 'spin') hint = 'Spinning… tap to skip';
     else if (planning && g.charging) hint = 'Winding up…';
+    else if (planning && g.tray.some((t) => t.count > 0))
+      hint = 'Drag toys out of the box onto the table · bend the table · set the power · SMACK!';
     else if (planning)
       hint =
         g.table.verts.length < 12

@@ -46,7 +46,15 @@ const BLOCKED: Record<string, string> = {
   sharp: 'TOO POINTY!',
   bolted: 'BOLTED!',
   steel: 'STEEL!',
+  'part-in-the-way': 'TOY IN THE WAY!',
+  'off-table': 'OFF THE TABLE!',
+  'on-pocket': 'NOT ON A POCKET!',
+  overlap: 'NO ROOM!',
+  tokens: 'NO GRABS LEFT!',
+  reach: 'TOO FAR!',
+  locked: 'STUCK!',
 };
+const PLONKS = ['PLONK!', 'THUNK!', 'PLOP!', 'TA-DA!'];
 
 /**
  * The juice router: listens to game events and turns them into sound, shake, jelly, word pops,
@@ -592,6 +600,73 @@ export class Director {
       fx.jelly.wobbleAll(r, 300);
       hud.toast('UN-BENT!', 'good');
       for (const b of game.balls) if (b.active) fx.balls.squash(b.id, 0, 1, 0.2);
+    });
+
+    ev.on('redo', () => {
+      sfx.sproing();
+      fx.jelly.wobbleAll(r, 220);
+      hud.toast('RE-BENT!', 'good');
+    });
+
+    ev.on('reset', () => {
+      sfx.sproing();
+      fx.jelly.wobbleAll(r, 380);
+      hud.toast('BACK TO THE START', 'meh');
+      for (const b of game.balls) if (b.active) fx.balls.squash(b.id, 0, 1, 0.25);
+    });
+
+    ev.on('partGrab', ({ turn }) => {
+      sfx.pop();
+      if (!turn) sfx.squeakStart();
+    });
+
+    ev.on('partMove', ({ result }) => {
+      sfx.squeakSet(result.applied * 60);
+      for (const pb of result.pushed) {
+        const l = Math.hypot(pb.dx, pb.dy);
+        if (l > 0.5) fx.balls.squash(pb.id, pb.dx / l, pb.dy / l, Math.min(0.3, 0.05 + l * 0.02));
+      }
+    });
+
+    ev.on('partTurn', ({ steps }) => {
+      if (this.now - this.lastDialTick > 0.04) {
+        this.lastDialTick = this.now;
+        sfx.tick(8 + steps * 2);
+      }
+    });
+
+    ev.on('partDrop', ({ stowed, x, y }) => {
+      sfx.squeakStop();
+      if (stowed) {
+        sfx.pop();
+        pop('BACK IN THE BOX', x, y - 40, { size: 26, color: '#ffe45c', force: true });
+        fx.particles.dust(x, y, 6, 160, r);
+      }
+    });
+
+    ev.on('partPlaced', ({ x, y, pushed }) => {
+      sfx.thunk();
+      fx.particles.dust(x, y, 10, 220, r);
+      fx.particles.ring(x, y, 80, '#fff3b0');
+      pop(pick(PLONKS, r), x, y - 46, { size: 30, color: '#fff3b0', force: true });
+      this.cam.addShake(0.06);
+      for (const pb of pushed) {
+        const l = Math.hypot(pb.dx, pb.dy);
+        if (l > 0.5) fx.balls.squash(pb.id, pb.dx / l, pb.dy / l, Math.min(0.35, 0.1 + l * 0.02));
+      }
+    });
+
+    ev.on('partBlocked', ({ reason, x, y }) => {
+      if (this.now - this.lastBlockPop > 0.9) {
+        this.lastBlockPop = this.now;
+        sfx.nope();
+        pop(BLOCKED[reason] ?? 'NOPE!', x, y - 40, { size: 28, color: '#ff8fa3', force: true });
+      }
+    });
+
+    ev.on('tokenSpent', ({ left, x, y }) => {
+      sfx.coin();
+      pop(left === 0 ? 'LAST GRAB!' : '-1 GRAB', x, y - 56, { size: 26, color: '#ffd23f', force: true });
     });
 
     ev.on('poke', ({ x, y }) => {

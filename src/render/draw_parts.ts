@@ -14,6 +14,11 @@ function glassHp(game: Game, p: Part & { kind: 'glass' }): number {
   return game.phase === 'sim' ? (game.world.solid.glassHp.get(p.id) ?? p.hp) : p.hp;
 }
 
+/** The toy's outline as a path (exported for selection glows). */
+export function traceOutline(ctx: CanvasRenderingContext2D, p: Part): boolean {
+  return tracePart(ctx, p);
+}
+
 function unit(d: { x: number; y: number }) {
   const l = Math.hypot(d.x, d.y) || 1;
   return { x: d.x / l, y: d.y / l };
@@ -76,115 +81,118 @@ export function drawPartShadows(ctx: CanvasRenderingContext2D, game: Game, cam: 
 }
 
 export function drawRaisedParts(ctx: CanvasRenderingContext2D, game: Game, fx: Fx, cam: Camera): void {
+  for (const p of game.table.parts) drawRaisedPart(ctx, p, game, fx, cam);
+}
+
+/** One raised toy (also used for the ghost of a toy being dragged out of the tray). */
+export function drawRaisedPart(ctx: CanvasRenderingContext2D, p: Part, game: Game, fx: Fx, cam: Camera): void {
   const t = fx.time;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  for (const p of game.table.parts) {
-    switch (p.kind) {
-      case 'stub':
-      case 'arc': {
-        ctx.beginPath();
-        tracePart(ctx, p);
-        ctx.lineWidth = THICK * 2 + 5;
-        ctx.strokeStyle = COLORS.ink;
-        ctx.stroke();
-        ctx.lineWidth = THICK * 2 - 1;
-        ctx.strokeStyle = COLORS.wood;
-        ctx.stroke();
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = COLORS.woodLight;
-        ctx.stroke();
-        break;
-      }
-      case 'glass': {
-        const hp = glassHp(game, p);
-        if (hp <= 0) break;
-        const e = ends(p);
-        ctx.beginPath();
-        tracePart(ctx, p);
-        ctx.lineWidth = THICK * 2 + 4;
-        ctx.strokeStyle = COLORS.ink;
-        ctx.stroke();
-        ctx.lineWidth = THICK * 2 - 1;
-        ctx.strokeStyle = 'rgba(160,236,255,0.85)';
-        ctx.stroke();
-        // Glints sliding along the pane.
-        const g = (t * 0.4) % 1;
-        ctx.beginPath();
-        ctx.moveTo(e.ax + (e.bx - e.ax) * g, e.ay + (e.by - e.ay) * g);
-        ctx.lineTo(e.ax + (e.bx - e.ax) * Math.min(1, g + 0.12), e.ay + (e.by - e.ay) * Math.min(1, g + 0.12));
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = 'rgba(255,255,255,0.9)';
-        ctx.stroke();
-        if (hp < p.hp || hp === 1) {
-          // Cracked: a zigzag across the middle.
-          const nx = -e.u.y;
-          const ny = e.u.x;
-          ctx.beginPath();
-          for (let k = -3; k <= 3; k++) {
-            const s = k * 9;
-            const z = (k % 2 === 0 ? 1 : -1) * 5;
-            const x = p.x + e.u.x * s + nx * z;
-            const y = p.y + e.u.y * s + ny * z;
-            if (k === -3) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
-          }
-          ctx.lineWidth = 1.8;
-          ctx.strokeStyle = COLORS.ink;
-          ctx.stroke();
-        }
-        break;
-      }
-      case 'gate': {
-        const u = unit(p.dir);
-        const h = p.len / 2;
-        const ax = p.x + u.y * h;
-        const ay = p.y - u.x * h;
-        const bx = p.x - u.y * h;
-        const by = p.y + u.x * h;
-        ctx.beginPath();
-        ctx.moveTo(ax, ay);
-        ctx.lineTo(bx, by);
-        ctx.lineWidth = THICK * 2 + 4;
-        ctx.strokeStyle = COLORS.ink;
-        ctx.stroke();
-        ctx.lineWidth = THICK * 2 - 1;
-        ctx.strokeStyle = '#b388ff';
-        ctx.stroke();
-        // Chevrons marching the way balls may pass.
-        const n = Math.max(2, Math.floor(p.len / 34));
-        for (let i = 0; i < n; i++) {
-          const k = (i + 0.5) / n;
-          const cx = ax + (bx - ax) * k + u.x * Math.sin(t * 6 + i) * 2;
-          const cy = ay + (by - ay) * k + u.y * Math.sin(t * 6 + i) * 2;
-          ctx.beginPath();
-          ctx.moveTo(cx - u.x * 4 + u.y * 5, cy - u.y * 4 - u.x * 5);
-          ctx.lineTo(cx + u.x * 5, cy + u.y * 5);
-          ctx.lineTo(cx - u.x * 4 - u.y * 5, cy - u.y * 4 + u.x * 5);
-          ctx.lineWidth = 2.6;
-          ctx.strokeStyle = '#fff8e7';
-          ctx.stroke();
-        }
-        for (const [ex, ey] of [
-          [ax, ay],
-          [bx, by],
-        ] as const) {
-          ctx.beginPath();
-          ctx.arc(ex, ey, THICK + 3, 0, TAU);
-          ctx.fillStyle = '#6b4bb8';
-          ctx.fill();
-          ctx.lineWidth = 2.5;
-          ctx.strokeStyle = COLORS.ink;
-          ctx.stroke();
-        }
-        break;
-      }
-      case 'bumper':
-        drawBumper(ctx, game, fx, cam, p);
-        break;
-      default:
-        break;
+  switch (p.kind) {
+    case 'stub':
+    case 'arc': {
+      ctx.beginPath();
+      tracePart(ctx, p);
+      ctx.lineWidth = THICK * 2 + 5;
+      ctx.strokeStyle = COLORS.ink;
+      ctx.stroke();
+      ctx.lineWidth = THICK * 2 - 1;
+      ctx.strokeStyle = COLORS.wood;
+      ctx.stroke();
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = COLORS.woodLight;
+      ctx.stroke();
+      break;
     }
+    case 'glass': {
+      const hp = glassHp(game, p);
+      if (hp <= 0) break;
+      const e = ends(p);
+      ctx.beginPath();
+      tracePart(ctx, p);
+      ctx.lineWidth = THICK * 2 + 4;
+      ctx.strokeStyle = COLORS.ink;
+      ctx.stroke();
+      ctx.lineWidth = THICK * 2 - 1;
+      ctx.strokeStyle = 'rgba(160,236,255,0.85)';
+      ctx.stroke();
+      // Glints sliding along the pane.
+      const g = (t * 0.4) % 1;
+      ctx.beginPath();
+      ctx.moveTo(e.ax + (e.bx - e.ax) * g, e.ay + (e.by - e.ay) * g);
+      ctx.lineTo(e.ax + (e.bx - e.ax) * Math.min(1, g + 0.12), e.ay + (e.by - e.ay) * Math.min(1, g + 0.12));
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.stroke();
+      if (hp < p.hp || hp === 1) {
+        // Cracked: a zigzag across the middle.
+        const nx = -e.u.y;
+        const ny = e.u.x;
+        ctx.beginPath();
+        for (let k = -3; k <= 3; k++) {
+          const s = k * 9;
+          const z = (k % 2 === 0 ? 1 : -1) * 5;
+          const x = p.x + e.u.x * s + nx * z;
+          const y = p.y + e.u.y * s + ny * z;
+          if (k === -3) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.lineWidth = 1.8;
+        ctx.strokeStyle = COLORS.ink;
+        ctx.stroke();
+      }
+      break;
+    }
+    case 'gate': {
+      const u = unit(p.dir);
+      const h = p.len / 2;
+      const ax = p.x + u.y * h;
+      const ay = p.y - u.x * h;
+      const bx = p.x - u.y * h;
+      const by = p.y + u.x * h;
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+      ctx.lineWidth = THICK * 2 + 4;
+      ctx.strokeStyle = COLORS.ink;
+      ctx.stroke();
+      ctx.lineWidth = THICK * 2 - 1;
+      ctx.strokeStyle = '#b388ff';
+      ctx.stroke();
+      // Chevrons marching the way balls may pass.
+      const n = Math.max(2, Math.floor(p.len / 34));
+      for (let i = 0; i < n; i++) {
+        const k = (i + 0.5) / n;
+        const cx = ax + (bx - ax) * k + u.x * Math.sin(t * 6 + i) * 2;
+        const cy = ay + (by - ay) * k + u.y * Math.sin(t * 6 + i) * 2;
+        ctx.beginPath();
+        ctx.moveTo(cx - u.x * 4 + u.y * 5, cy - u.y * 4 - u.x * 5);
+        ctx.lineTo(cx + u.x * 5, cy + u.y * 5);
+        ctx.lineTo(cx - u.x * 4 - u.y * 5, cy - u.y * 4 + u.x * 5);
+        ctx.lineWidth = 2.6;
+        ctx.strokeStyle = '#fff8e7';
+        ctx.stroke();
+      }
+      for (const [ex, ey] of [
+        [ax, ay],
+        [bx, by],
+      ] as const) {
+        ctx.beginPath();
+        ctx.arc(ex, ey, THICK + 3, 0, TAU);
+        ctx.fillStyle = '#6b4bb8';
+        ctx.fill();
+        ctx.lineWidth = 2.5;
+        ctx.strokeStyle = COLORS.ink;
+        ctx.stroke();
+      }
+      break;
+    }
+    case 'bumper':
+      drawBumper(ctx, game, fx, cam, p);
+      break;
+    default:
+      break;
   }
 }
 

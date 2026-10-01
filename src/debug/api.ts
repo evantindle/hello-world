@@ -91,6 +91,40 @@ export function installDebugApi(d: DebugDeps): void {
     undo() {
       return game.undo();
     },
+    redo() {
+      return game.redo();
+    },
+    reset() {
+      return game.reset();
+    },
+    /** Puts tray item `item` down at (x, y). */
+    place(item: number, x: number, y: number) {
+      const ok = game.placeFromTray(item, x, y);
+      d.draw();
+      return ok;
+    },
+    /** Drags toy `id` from where it is toward (x, y) (and back into the tray with `stow`). */
+    dragPart(id: number, x: number, y: number, stow = false) {
+      const p = game.table.parts.find((q) => q.id === id);
+      if (!p || !game.beginPartDrag(id, p.x, p.y, false)) return null;
+      const r = game.partDragTo(x, y);
+      game.endPartDrag(stow);
+      d.draw();
+      return r;
+    },
+    /** Turns toy `id` toward direction index k (5-degree steps from +x, clockwise). */
+    turnPart(id: number, k: number) {
+      const p = game.table.parts.find((q) => q.id === id);
+      if (!p || !game.beginPartDrag(id, p.x, p.y, true)) return false;
+      game.turnPartTo(k);
+      game.endPartDrag();
+      d.draw();
+      return true;
+    },
+    /** This turn's edits so far (what a stroke records). */
+    edits() {
+      return structuredClone(game.edits);
+    },
     /** World -> CSS px relative to the canvas, using the live camera. */
     toScreen(x: number, y: number) {
       return d.cam.worldToScreen(x, y);
@@ -111,6 +145,9 @@ export function installDebugApi(d: DebugDeps): void {
         hunger: game.hunger,
         aim: game.aim,
         verts: game.table.verts.map((v) => ({ id: v.id, x: v.x, y: v.y, pocket: v.pocket })),
+        parts: structuredClone(game.table.parts),
+        tray: game.tray.map((t) => t.count),
+        tokens: game.tokens,
         balls: game.balls.map((b) => ({ id: b.id, x: b.x, y: b.y, active: b.active })),
       };
     },

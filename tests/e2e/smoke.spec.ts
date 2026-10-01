@@ -107,7 +107,10 @@ test('real pointer input: drag a knob, turn the dial, put on English, press SMAC
   await page.mouse.down();
   await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height * 0.85, { steps: 4 });
   await page.mouse.up();
-  const eng = await page.evaluate(() => ({ x: window.__bendy.game.englishX, y: window.__bendy.game.englishY }));
+  const eng = await page.evaluate(() => ({
+    x: window.__bendy.game.englishX,
+    y: window.__bendy.game.englishY,
+  }));
   expect(eng.y).toBeGreaterThan(0.5);
   await page.screenshot({ path: `${SHOTS}/05b-dial.png` });
   await page.getByRole('button', { name: 'Shoot' }).click();
@@ -148,4 +151,35 @@ test('phone portrait rotates the table and still plays', async ({ browser }) => 
   expect(await page.evaluate(() => window.__bendy.shoot(0.6))).toBe(true);
   expect(errors).toEqual([]);
   await page.close();
+});
+
+test('toy tray: drag a wall onto the table with a real pointer, then undo it', async ({ page }) => {
+  const errors: string[] = [];
+  await boot(page, '?seed=3&mute=1&toys=1', errors);
+  await page.evaluate(() => {
+    window.__bendy.start();
+    window.__bendy.skipSpin();
+    window.__bendy.untilPhase('plan', 10);
+  });
+  await page.waitForFunction(() => window.__bendy.cameraSettled());
+  const wall = page.getByRole('button', { name: 'WALL' });
+  await expect(wall).toBeVisible();
+  const from = (await wall.boundingBox())!;
+  const canvas = (await page.locator('#world').boundingBox())!;
+  const to = await page.evaluate(() => window.__bendy.toScreen(520, 150));
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(canvas.x + to.x, canvas.y + to.y, { steps: 8 });
+  await page.mouse.up();
+  const placed = await page.evaluate(() => window.__bendy.state());
+  expect(placed.parts).toHaveLength(1);
+  expect(placed.parts[0].kind).toBe('stub');
+  expect(Math.abs(placed.parts[0].x - 520)).toBeLessThan(2);
+  expect(placed.tray[0]).toBe(0);
+  await page.screenshot({ path: `${SHOTS}/06-tray.png` });
+  await page.getByRole('button', { name: 'UNDO' }).click();
+  const undone = await page.evaluate(() => window.__bendy.state());
+  expect(undone.parts).toHaveLength(0);
+  expect(undone.tray[0]).toBe(1);
+  expect(errors).toEqual([]);
 });

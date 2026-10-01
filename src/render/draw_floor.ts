@@ -2,7 +2,7 @@ import { BLACKHOLE_CORE, COLORS } from '../config';
 import { TAU } from '../core/vec';
 import type { Fx } from '../fx/fx';
 import type { Game } from '../game/game';
-import type { Field, PortalEnd, Zone } from '../geom/parts';
+import { compileFloor, type Field, type Part, type PortalEnd, type Zone } from '../geom/parts';
 import type { Camera } from './camera';
 import { tracePath, type VisualTable } from './draw_table';
 
@@ -493,6 +493,62 @@ function drawPortal(ctx: CanvasRenderingContext2D, e: PortalEnd, color: string, 
   ctx.stroke();
 }
 
+/**
+ * One flat toy on its own (the ghost of a toy coming out of the tray). Portals are drawn as a lone
+ * end in its pair's first colour.
+ */
+export function drawFloorPart(ctx: CanvasRenderingContext2D, p: Part, t: number, cam: Camera): void {
+  const c = compileFloor([p]);
+  for (const z of c.zones) drawZone(ctx, z, t);
+  for (const f of c.fields) {
+    if (f.kind === 'blackhole') drawBlackHole(ctx, f, t);
+    else drawMagnet(ctx, f, t, cam);
+  }
+  if (p.kind === 'portal') {
+    drawPortal(ctx, { src: p.id, link: p.link, x: p.x, y: p.y, r: p.r, ox: p.x, oy: p.y, to: 0 }, PORTAL_COLORS[0]![0], t);
+  }
+  if (p.kind === 'bullseye') drawBullseye(ctx, p, t);
+}
+
+function drawZone(ctx: CanvasRenderingContext2D, z: Zone, t: number): void {
+  switch (z.kind) {
+    case 'booster':
+      drawBooster(ctx, z, t);
+      break;
+    case 'ice':
+      drawIce(ctx, z, t);
+      break;
+    case 'mud':
+      drawMud(ctx, z, t);
+      break;
+    case 'sand':
+      drawSand(ctx, z);
+      break;
+    case 'conveyor':
+      drawConveyor(ctx, z, t);
+      break;
+    case 'fan':
+      drawFan(ctx, z, t);
+      break;
+  }
+}
+
+function drawBullseye(ctx: CanvasRenderingContext2D, p: Part & { kind: 'bullseye' }, t: number): void {
+  for (let i = 3; i >= 1; i--) {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, (p.r * i) / 3, 0, TAU);
+    ctx.fillStyle = i % 2 === 1 ? 'rgba(255,77,109,0.55)' : 'rgba(255,248,231,0.55)';
+    ctx.fill();
+  }
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, p.r + 3 + Math.sin(t * 3) * 2, 0, TAU);
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = COLORS.ink;
+  ctx.setLineDash([6, 6]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
 export function drawFloorParts(
   ctx: CanvasRenderingContext2D,
   game: Game,
@@ -511,44 +567,8 @@ export function drawFloorParts(
   ctx.save();
   tracePath(ctx, vt);
   ctx.clip();
-  for (const z of g.zones) {
-    switch (z.kind) {
-      case 'booster':
-        drawBooster(ctx, z, t);
-        break;
-      case 'ice':
-        drawIce(ctx, z, t);
-        break;
-      case 'mud':
-        drawMud(ctx, z, t);
-        break;
-      case 'sand':
-        drawSand(ctx, z);
-        break;
-      case 'conveyor':
-        drawConveyor(ctx, z, t);
-        break;
-      case 'fan':
-        drawFan(ctx, z, t);
-        break;
-    }
-  }
-  for (const p of game.table.parts) {
-    if (p.kind !== 'bullseye') continue;
-    for (let i = 3; i >= 1; i--) {
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, (p.r * i) / 3, 0, TAU);
-      ctx.fillStyle = i % 2 === 1 ? 'rgba(255,77,109,0.55)' : 'rgba(255,248,231,0.55)';
-      ctx.fill();
-    }
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, p.r + 3 + Math.sin(t * 3) * 2, 0, TAU);
-    ctx.lineWidth = 2.5;
-    ctx.strokeStyle = COLORS.ink;
-    ctx.setLineDash([6, 6]);
-    ctx.stroke();
-    ctx.setLineDash([]);
-  }
+  for (const z of g.zones) drawZone(ctx, z, t);
+  for (const p of game.table.parts) if (p.kind === 'bullseye') drawBullseye(ctx, p, t);
   for (const f of g.fields) {
     if (f.kind === 'blackhole') drawBlackHole(ctx, f, t);
     else drawMagnet(ctx, f, t, cam);

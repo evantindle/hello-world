@@ -19,6 +19,8 @@ interface PartBase {
   y: number;
   /** Placed by the level: cannot be moved or rotated. */
   locked?: boolean;
+  /** Put down by the player from tray item `placed` (it can go back there). */
+  placed?: number;
 }
 
 export type Part =

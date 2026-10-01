@@ -1,5 +1,6 @@
 import { buildGeom, cloneTable, type Table, type TableGeom } from '../geom/table';
 import type { Ball } from '../physics/world';
+import type { TrayItem } from './placement';
 import type { Mode } from './ruleset';
 
 /**
@@ -20,6 +21,8 @@ export interface GameState {
   budget: number | null;
   /** Grab tokens left, or null when unlimited. */
   tokens: number | null;
+  /** Toys still waiting in the tray. */
+  tray: TrayItem[];
   streak: number;
   bestStreak: number;
 }
@@ -37,6 +40,7 @@ export interface StateHost {
   hunger: number;
   budget: number;
   tokens: number;
+  tray: TrayItem[];
   streak: number;
   bestStreak: number;
 }
@@ -56,6 +60,7 @@ export function snapState(g: StateHost): GameState {
     hunger: g.hunger,
     budget: finiteOrNull(g.budget),
     tokens: finiteOrNull(g.tokens),
+    tray: structuredClone(g.tray),
     streak: g.streak,
     bestStreak: g.bestStreak,
   };
@@ -78,6 +83,7 @@ export function restoreState(g: StateHost, s: GameState): void {
   g.penalties = s.penalties;
   g.budget = s.budget ?? Infinity;
   g.tokens = s.tokens ?? Infinity;
+  g.tray = structuredClone(s.tray ?? []);
   g.streak = s.streak;
   g.bestStreak = s.bestStreak;
 }

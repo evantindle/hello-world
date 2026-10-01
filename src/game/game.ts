@@ -15,13 +15,32 @@ import { damp } from '../core/easing';
 import { Emitter } from '../core/emitter';
 import { randomSeed, rngFor, subSeed } from '../core/rng';
 import { clamp01, hyp, TAU, wrapTau } from '../core/vec';
+import { ARROW_PARTS, type Dir, type Part } from '../geom/parts';
+import { pointInPolygon } from '../geom/polygon';
 import { castGuide, type Guide, type GuideSpin } from '../geom/raycast';
 import { buildGeom, cloneTable, createTable, type Pocket, type Table, type TableGeom } from '../geom/table';
 import { launchFrom } from '../physics/launch';
 import { createWorld, stepWorld, type Ball, type PhysEvent, type World } from '../physics/world';
+import { History, type EditSnap } from './history';
+import {
+  canTurn,
+  dirOf,
+  hitPart,
+  movePart,
+  nearestDir,
+  placePart,
+  removeParts,
+  TURN_STEPS,
+  turnKnob,
+  turnPart,
+  type PartHandle,
+  type PartPreset,
+  type TrayItem,
+} from './placement';
 import {
   DragSession,
   hitHandle,
+  listHandles,
   removeBend,
   type BlockReason,
   type Handle,
@@ -29,7 +48,7 @@ import {
   type ReshapeHost,
 } from './reshape';
 import { findRespawnSpot, loadBest, rackBalls, rankFor, saveBest, type Rank } from './rules';
-import { cloneLog, type TurnRecord } from './record';
+import { cloneLog, type Edit, type TurnRecord } from './record';
 import { V1_RULES, type Ruleset } from './ruleset';
 import { hashBoard, snapState } from './serialize';
 import { quantizeShot, type ShotQ } from './shot';
@@ -75,6 +94,19 @@ export interface GameEvents {
   blocked: { vid: number; reason: BlockReason; x: number; y: number };
   bendRemoved: { x: number; y: number };
   undo: Record<string, never>;
+  redo: Record<string, never>;
+  reset: Record<string, never>;
+  /** A toy was grabbed (to move it, or by its knob to turn it). */
+  partGrab: { id: number; turn: boolean; x: number; y: number };
+  partMove: { id: number; result: MoveResult; x: number; y: number };
+  partTurn: { id: number; steps: number; x: number; y: number };
+  /** A toy was let go of (back into the tray, if `stowed`). */
+  partDrop: { id: number; stowed: boolean; x: number; y: number };
+  partPlaced: { ids: number[]; item: number; x: number; y: number; pushed: MoveResult['pushed'] };
+  /** A toy edit (or a placement, `id` null) was refused. */
+  partBlocked: { id: number | null; reason: BlockReason; x: number; y: number };
+  /** A grab token was spent. */
+  tokenSpent: { left: number; x: number; y: number };
   poke: { x: number; y: number };
   turnResult: TurnResult;
   respawnStart: { fromX: number; fromY: number; toX: number; toY: number };
@@ -88,10 +120,27 @@ export interface GameEvents {
   gameOver: GameOverInfo;
 }
 
-interface Snapshot {
-  table: Table;
-  balls: { x: number; y: number; active: boolean }[];
+/** A toy being dragged or turned. */
+interface PartSession {
+  id: number;
+  turn: boolean;
+  /** Pointer-to-toy offset (moves) and where the toy was when grabbed. */
+  gx: number;
+  gy: number;
+  ax: number;
+  ay: number;
+  /** Distance moved / steps turned so far. */
+  moved: number;
+  /** Free to move (put down from the tray this turn, or no limits at all). */
+  free: boolean;
+  lastBlocked: BlockReason | null;
 }
+
+/** Pointer positions are quantized like this as they arrive, so recorded edits replay exactly. */
+const q64 = (v: number): number => Math.round(v * 64) / 64;
+
+/** Radians per turning step (5 degrees), for charging stretch budget on knob travel. */
+const TURN_STEP_RAD = 0.08726646259971647;
 
 export interface GameOptions {
   seed?: number;
@@ -99,6 +148,8 @@ export interface GameOptions {
   persist?: boolean;
   /** Defaults to the original v1 rules. */
   rules?: Ruleset;
+  /** Toys the player can put down. */
+  tray?: TrayItem[];
 }
 
 /** Everything a new game needs: its rules and seed, and optionally a starting table and balls. */
@@ -109,6 +160,8 @@ export interface GameSetup {
   table?: Table;
   /** Starting balls (cloned); default: the v1 rack, shuffled by the seed. */
   balls?: Ball[];
+  /** Toys the player can put down (cloned); default none. */
+  tray?: TrayItem[];
   levelId?: string;
 }
 
@@ -167,13 +220,22 @@ export class Game implements ReshapeHost {
   /** Debug/test hook: the next spin lands here instead of at random. */
   forcedAngle: number | null = null;
   drag: DragSession | null = null;
+  /** A toy being dragged or turned. */
+  partDrag: PartSession | null = null;
+  /** Toys waiting in the tray. */
+  tray: TrayItem[] = [];
+  /** Toys put down from the tray this turn: moving them (or taking them back) is free. */
+  fresh = new Set<number>();
+  /** This turn's undo history. */
+  readonly editHistory = new History();
+  /** This turn's edits so far, as replayable data (recorded with the stroke). */
+  edits: Edit[] = [];
   lastOver: GameOverInfo | null = null;
-  private snapshot: Snapshot | null = null;
-  /** Budget and tokens at the start of the plan phase (undo restores them). */
-  private planBudget = BUDGET;
-  private planTokens = Infinity;
-  /** Something was bent since the plan phase began (or since the last undo). */
-  private edited = false;
+  /** The state just before the edit in progress, and the edit being recorded. */
+  private editBefore: EditSnap | null = null;
+  private curEdit: Edit | null = null;
+  /** The table differs from the start of the turn (RESET has something to do). */
+  private dirty = false;
   private lastSetup: GameSetup | null = null;
   private acc = 0;
   private evs: PhysEvent[] = [];
@@ -182,7 +244,7 @@ export class Game implements ReshapeHost {
   constructor(opts: GameOptions = {}) {
     this.persist = opts.persist ?? false;
     if (this.persist) this.best = loadBest();
-    this.setup({ rules: opts.rules ?? V1_RULES, seed: opts.seed ?? randomSeed() });
+    this.setup({ rules: opts.rules ?? V1_RULES, seed: opts.seed ?? randomSeed(), tray: opts.tray });
     this.world = createWorld(this.balls, this.geom);
   }
 
@@ -226,7 +288,26 @@ export class Game implements ReshapeHost {
   }
 
   get canUndo(): boolean {
-    return this.canReshape && this.snapshot !== null && this.edited;
+    return this.canReshape && this.editHistory.canUndo;
+  }
+
+  get canRedo(): boolean {
+    return this.canReshape && this.editHistory.canRedo;
+  }
+
+  get canReset(): boolean {
+    return this.canReshape && this.dirty;
+  }
+
+  /** Grab tokens are what limits bending (Classic). */
+  get tokenMode(): boolean {
+    return this.rules.reshape.kind === 'tokens';
+  }
+
+  /** How far one grab may move a knob or a toy (Infinity unless grab tokens are in play). */
+  get reach(): number {
+    const lim = this.rules.reshape;
+    return lim.kind === 'tokens' ? lim.reach : Infinity;
   }
 
   guide(): Guide {
@@ -245,6 +326,7 @@ export class Game implements ReshapeHost {
   private setup(s: GameSetup): void {
     // Wind down anything in flight so listeners (sounds, vignette) are told it stopped.
     if (this.drag) this.endDrag();
+    if (this.partDrag) this.endPartDrag();
     if (this.charging) this.cancelShot();
     if (this.slowmo) this.setSlowmo(false);
     this.lastSetup = s;
@@ -274,7 +356,12 @@ export class Game implements ReshapeHost {
     this.charging = false;
     this.chargeT = 0;
     this.drag = null;
-    this.snapshot = null;
+    this.partDrag = null;
+    this.tray = structuredClone(s.tray ?? []);
+    this.fresh.clear();
+    this.editHistory.clear();
+    this.edits = [];
+    this.dirty = false;
     this.aim = Math.PI;
     this.lastOver = null;
     this.events.emit('newGame', { seed: this.seed });
@@ -324,12 +411,12 @@ export class Game implements ReshapeHost {
       }
       case 'plan':
         if (this.rules.reshape.kind === 'budget') this.budget = this.rules.reshape.perTurn;
-        this.planBudget = this.budget;
-        this.planTokens = this.tokens;
-        this.edited = false;
         this.charging = false;
         this.chargeT = 0;
-        this.snapshot = this.takeSnapshot();
+        this.fresh.clear();
+        this.edits = [];
+        this.dirty = false;
+        this.editHistory.begin(this.snapEdit());
         break;
       case 'strike':
         this.shots++;
@@ -344,7 +431,13 @@ export class Game implements ReshapeHost {
         const cue = this.cue;
         const eng = this.rules.english;
         this.shot = quantizeShot(this.aim, this.strikePower, eng ? this.englishX : 0, eng ? this.englishY : 0);
-        this.pending = { stroke: this.shots, aim: this.aim, shot: this.shot, pre: snapState(this) };
+        this.pending = {
+          stroke: this.shots,
+          aim: this.aim,
+          shot: this.shot,
+          edits: this.edits.slice(),
+          pre: snapState(this),
+        };
         const { dx, dy, speed } = launchFrom(cue, this.shot);
         this.events.emit('strike', { power: this.strikePower, x: cue.x, y: cue.y, dx, dy, speed });
         break;
@@ -619,7 +712,7 @@ export class Game implements ReshapeHost {
   shoot(power?: number): boolean {
     if (this.phase !== 'plan' || this.charging) return false;
     if (power !== undefined) this.setDial(power);
-    if (this.drag) this.endDrag();
+    this.endEdits();
     this.charging = true;
     this.chargeT = 0;
     this.windup = Math.max(0.25, Math.min(CHARGE_TIME, CHARGE_TIME * this.dial));
@@ -635,41 +728,178 @@ export class Game implements ReshapeHost {
     this.events.emit('chargeCancel', { reason: 'cancel' });
   }
 
-  undo(): boolean {
-    if (!this.canReshape || !this.snapshot) return false;
-    if (this.drag) this.endDrag();
-    const s = this.snapshot;
+  // ------------------------------------------------------------------ edits: undo, redo, reset
+
+  /** Everything an edit can change, as a snapshot (for undo, redo and reset). */
+  private snapEdit(): EditSnap {
+    return {
+      table: cloneTable(this.table),
+      balls: this.balls.map((b) => ({ x: b.x, y: b.y })),
+      budget: this.budget,
+      tokens: this.tokens,
+      tray: this.tray.map((t) => t.count),
+      fresh: [...this.fresh],
+    };
+  }
+
+  private restoreEdit(s: EditSnap): void {
     this.table = cloneTable(s.table);
     this.geom = buildGeom(this.table, this.hunger);
     this.balls.forEach((b, i) => {
-      const p = s.balls[i]!;
+      const p = s.balls[i];
+      if (!p) return;
       b.x = p.x;
       b.y = p.y;
-      b.active = p.active;
       b.vx = 0;
       b.vy = 0;
     });
-    this.budget = this.planBudget;
-    this.tokens = this.planTokens;
-    this.edited = false;
+    this.budget = s.budget;
+    this.tokens = s.tokens;
+    s.tray.forEach((n, i) => {
+      if (this.tray[i]) this.tray[i].count = n;
+    });
+    this.fresh = new Set(s.fresh);
+  }
+
+  private editKey(s: EditSnap): string {
+    return JSON.stringify([s.table, s.balls, s.budget, s.tokens, s.tray]);
+  }
+
+  private refreshDirty(): void {
+    const start = this.editHistory.start;
+    this.dirty = start !== null && this.editKey(this.snapEdit()) !== this.editKey(start);
+  }
+
+  /** An edit finished and changed something: remember it for undo, and record it. */
+  private commitEdit(before: EditSnap, edit: Edit): void {
+    this.editHistory.commit(before);
+    this.edits.push(edit);
+    this.refreshDirty();
+  }
+
+  private endEdits(): void {
+    if (this.drag) this.endDrag();
+    if (this.partDrag) this.endPartDrag();
+  }
+
+  /** Step back one edit. */
+  undo(): boolean {
+    if (!this.canReshape) return false;
+    this.endEdits();
+    const s = this.editHistory.undo(this.snapEdit());
+    if (!s) return false;
+    this.restoreEdit(s);
+    this.edits.push({ op: 'undo' });
+    this.refreshDirty();
     this.events.emit('undo', {});
     return true;
   }
+
+  redo(): boolean {
+    if (!this.canReshape) return false;
+    this.endEdits();
+    const s = this.editHistory.redo(this.snapEdit());
+    if (!s) return false;
+    this.restoreEdit(s);
+    this.edits.push({ op: 'redo' });
+    this.refreshDirty();
+    this.events.emit('redo', {});
+    return true;
+  }
+
+  /** Back to how the table was when the turn began (itself undoable). */
+  reset(): boolean {
+    if (!this.canReshape) return false;
+    this.endEdits();
+    const start = this.editHistory.start;
+    if (!start || !this.dirty) return false;
+    this.editHistory.commit(this.snapEdit());
+    this.restoreEdit(start);
+    this.edits.push({ op: 'reset' });
+    this.refreshDirty();
+    this.events.emit('reset', {});
+    return true;
+  }
+
+  /** Replays one recorded edit through the same paths a player's input takes. */
+  applyEdit(e: Edit): boolean {
+    switch (e.op) {
+      case 'grab': {
+        let h: Handle | undefined;
+        if (e.edge !== undefined) h = listHandles(this.table).find((q) => q.kind === 'edge' && q.index === e.edge);
+        else {
+          const i = this.table.verts.findIndex((v) => v.id === e.vid);
+          const v = this.table.verts[i];
+          if (v) h = { kind: 'vertex', index: i, x: v.x, y: v.y, pocket: v.pocket, locked: v.bolted === true };
+        }
+        if (!h || !this.beginDrag(h, e.path[0]!, e.path[1]!)) return false;
+        for (let i = 2; i + 1 < e.path.length; i += 2) this.dragTo(e.path[i]!, e.path[i + 1]!);
+        this.endDrag();
+        return true;
+      }
+      case 'unbend':
+        return this.removeBendAt(e.vid);
+      case 'place':
+        return this.placeFromTray(e.item, e.x, e.y);
+      case 'move': {
+        if (!this.beginPartDrag(e.id, e.path[0]!, e.path[1]!, false)) return false;
+        for (let i = 2; i + 1 < e.path.length; i += 2) this.partDragTo(e.path[i]!, e.path[i + 1]!);
+        this.endPartDrag(e.stow === true);
+        return true;
+      }
+      case 'turn': {
+        const p = this.table.parts.find((q) => q.id === e.id);
+        if (!p || !this.beginPartDrag(e.id, p.x, p.y, true)) return false;
+        for (const k of e.ks) this.turnPartTo(k);
+        this.endPartDrag();
+        return true;
+      }
+      case 'undo':
+        return this.undo();
+      case 'redo':
+        return this.redo();
+      case 'reset':
+        return this.reset();
+    }
+  }
+
+  // ------------------------------------------------------------------ edits: bending
 
   hitHandle(x: number, y: number, radius: number): Handle | null {
     return this.canReshape ? hitHandle(this.table, x, y, radius) : null;
   }
 
+  /** A grab token is needed (and there are none left): say so. */
+  private outOfTokens(x: number, y: number, vid: number | null): boolean {
+    if (!this.tokenMode || this.tokens >= 1) return false;
+    if (vid === null) this.events.emit('partBlocked', { id: null, reason: 'tokens', x, y });
+    else this.events.emit('blocked', { vid, reason: 'tokens', x, y });
+    return true;
+  }
+
+  private spendToken(x: number, y: number): void {
+    if (!this.tokenMode) return;
+    this.tokens = Math.max(0, this.tokens - 1);
+    this.events.emit('tokenSpent', { left: this.tokens, x, y });
+  }
+
   beginDrag(h: Handle, px: number, py: number): boolean {
-    if (!this.canReshape || this.drag) return false;
+    if (!this.canReshape || this.drag || this.partDrag) return false;
+    px = q64(px);
+    py = q64(py);
     if (h.kind === 'vertex' && h.locked) {
       const v = this.table.verts[h.index];
       if (v) this.events.emit('blocked', { vid: v.id, reason: 'bolted', x: v.x, y: v.y });
       return false;
     }
-    const s = DragSession.begin(this, h, px, py);
+    const v0 = h.kind === 'vertex' ? this.table.verts[h.index] : null;
+    if (this.outOfTokens(h.x, h.y, v0 ? v0.id : -1)) return false;
+    const before = this.snapEdit();
+    const s = DragSession.begin(this, h, px, py, this.reach);
     if (!s) return false;
     this.drag = s;
+    this.editBefore = before;
+    this.curEdit = { op: 'grab', vid: s.vid, ...(h.kind === 'edge' ? { edge: h.index } : {}), path: [px, py] };
     this.events.emit('dragStart', { vid: s.vid, inserted: s.inserted, x: px, y: py });
     return true;
   }
@@ -677,8 +907,10 @@ export class Game implements ReshapeHost {
   dragTo(px: number, py: number): MoveResult | null {
     const s = this.drag;
     if (!s) return null;
+    px = q64(px);
+    py = q64(py);
+    if (this.curEdit?.op === 'grab') this.curEdit.path.push(px, py);
     const r = s.move(this, px, py);
-    if (r.applied > 0) this.edited = true;
     const v = this.table.verts.find((q) => q.id === s.vid);
     if (v) {
       if (r.applied > 0) this.events.emit('drag', { vid: s.vid, result: r, x: v.x, y: v.y });
@@ -691,7 +923,18 @@ export class Game implements ReshapeHost {
     const s = this.drag;
     if (!s) return;
     this.drag = null;
-    const dropped = s.end(this);
+    const before = this.editBefore!;
+    const edit = this.curEdit!;
+    this.editBefore = null;
+    this.curEdit = null;
+    // A bend inserted but never really moved goes away again, leaving no trace at all.
+    const dropped = s.inserted && s.applied < 2;
+    if (dropped) this.restoreEdit(before);
+    else if (s.applied > 0) {
+      const v = this.table.verts.find((q) => q.id === s.vid);
+      if (this.tokenMode && s.applied >= 2) this.spendToken(v?.x ?? 0, v?.y ?? 0);
+      this.commitEdit(before, edit);
+    }
     this.events.emit('dragEnd', { vid: s.vid, dropped });
   }
 
@@ -701,12 +944,14 @@ export class Game implements ReshapeHost {
     if (!v || v.pocket) return false;
     const x = v.x;
     const y = v.y;
+    if (this.outOfTokens(x, y, vid)) return false;
+    const before = this.snapEdit();
     const r = removeBend(this, vid);
     if (r.removed) {
-      this.edited = true;
+      this.spendToken(x, y);
+      this.commitEdit(before, { op: 'unbend', vid });
       this.events.emit('bendRemoved', { x, y });
-    }
-    else if (r.blocked) this.events.emit('blocked', { vid, reason: r.blocked, x, y });
+    } else if (r.blocked) this.events.emit('blocked', { vid, reason: r.blocked, x, y });
     return r.removed;
   }
 
@@ -714,10 +959,213 @@ export class Game implements ReshapeHost {
     this.events.emit('poke', { x, y });
   }
 
-  private takeSnapshot(): Snapshot {
-    return {
-      table: cloneTable(this.table),
-      balls: this.balls.map((b) => ({ x: b.x, y: b.y, active: b.active })),
-    };
+  // ------------------------------------------------------------------ edits: toys
+
+  /** Toys that show a turning knob right now: the ones a player could turn. */
+  turnable(): number[] {
+    return this.table.parts.filter((p) => canTurn(p, this.rules.arrows)).map((p) => p.id);
   }
+
+  hitPart(x: number, y: number, radius: number, knobs: readonly number[] = this.turnable()): PartHandle | null {
+    return this.canReshape ? hitPart(this.table, x, y, radius, knobs) : null;
+  }
+
+  /** Grab toy `id` at (px, py): to slide it, or (turn) by its knob to turn it. */
+  beginPartDrag(id: number, px: number, py: number, turn: boolean): boolean {
+    if (!this.canReshape || this.drag || this.partDrag) return false;
+    px = q64(px);
+    py = q64(py);
+    const p = this.table.parts.find((q) => q.id === id);
+    if (!p) return false;
+    if (p.locked || (turn && !canTurn(p, this.rules.arrows))) {
+      this.events.emit('partBlocked', { id, reason: 'locked', x: p.x, y: p.y });
+      return false;
+    }
+    const free = this.fresh.has(id) || this.rules.reshape.kind === 'free';
+    if (!free && this.outOfTokens(p.x, p.y, null)) return false;
+    this.editBefore = this.snapEdit();
+    this.partDrag = { id, turn, gx: p.x - px, gy: p.y - py, ax: p.x, ay: p.y, moved: 0, free, lastBlocked: null };
+    this.curEdit = turn ? { op: 'turn', id, ks: [] } : { op: 'move', id, path: [px, py] };
+    this.events.emit('partGrab', { id, turn, x: p.x, y: p.y });
+    return true;
+  }
+
+  /** Drag the grabbed toy toward the pointer (or, by its knob, turn it toward the pointer). */
+  partDragTo(px: number, py: number): MoveResult | null {
+    const s = this.partDrag;
+    if (!s) return null;
+    px = q64(px);
+    py = q64(py);
+    const p = this.table.parts.find((q) => q.id === s.id);
+    if (!p) return null;
+    if (s.turn) {
+      this.turnPartTo(nearestDir(px - p.x, py - p.y));
+      return null;
+    }
+    if (this.curEdit?.op === 'move') this.curEdit.path.push(px, py);
+    let tx = px + s.gx;
+    let ty = py + s.gy;
+    let clipped: BlockReason | null = null;
+    if (!s.free && this.reach < Infinity) {
+      const dx = tx - s.ax;
+      const dy = ty - s.ay;
+      const d = hyp(dx, dy);
+      if (d > this.reach) {
+        tx = s.ax + (dx * this.reach) / d;
+        ty = s.ay + (dy * this.reach) / d;
+        clipped = 'reach';
+      }
+    }
+    if (!s.free && this.rules.reshape.kind === 'budget') {
+      const dx = tx - p.x;
+      const dy = ty - p.y;
+      const d = hyp(dx, dy);
+      if (d > this.budget) {
+        if (this.budget < 0.5) {
+          this.events.emit('partBlocked', { id: s.id, reason: 'budget', x: p.x, y: p.y });
+          return { applied: 0, blocked: 'budget', pushed: [] };
+        }
+        tx = p.x + (dx * this.budget) / d;
+        ty = p.y + (dy * this.budget) / d;
+        clipped = 'budget';
+      }
+    }
+    const r = movePart(this, s.id, tx, ty);
+    if (!r.blocked && clipped) r.blocked = clipped;
+    if (!s.free && this.rules.reshape.kind === 'budget') this.budget = Math.max(0, this.budget - r.applied);
+    s.moved += r.applied;
+    s.lastBlocked = r.blocked;
+    if (r.applied > 0) this.events.emit('partMove', { id: s.id, result: r, x: p.x, y: p.y });
+    if (r.blocked) this.events.emit('partBlocked', { id: s.id, reason: r.blocked, x: p.x, y: p.y });
+    return r;
+  }
+
+  /** Turn the grabbed toy toward direction index k (5-degree steps). */
+  turnPartTo(k: number): void {
+    const s = this.partDrag;
+    if (!s || !s.turn) return;
+    const p = this.table.parts.find((q) => q.id === s.id);
+    if (!p) return;
+    k = ((k % TURN_STEPS) + TURN_STEPS) % TURN_STEPS;
+    if (this.curEdit?.op === 'turn') this.curEdit.ks.push(k);
+    let target = k;
+    if (!s.free && this.rules.reshape.kind === 'budget') {
+      // Turning costs stretch too: the knob's travel.
+      const r = this.turnRadius(p);
+      const afford = Math.floor(this.budget / (TURN_STEP_RAD * r) + 1e-9);
+      const k0 = partTurnIndex(p);
+      let delta = (((k - k0) % TURN_STEPS) + TURN_STEPS) % TURN_STEPS;
+      if (delta > TURN_STEPS / 2) delta -= TURN_STEPS;
+      if (Math.abs(delta) > afford) {
+        target = k0 + Math.sign(delta) * afford;
+        if (afford === 0) {
+          this.events.emit('partBlocked', { id: s.id, reason: 'budget', x: p.x, y: p.y });
+          return;
+        }
+      }
+    }
+    const r = turnPart(this, s.id, target);
+    if (r.steps > 0) {
+      if (!s.free && this.rules.reshape.kind === 'budget') {
+        this.budget = Math.max(0, this.budget - r.steps * TURN_STEP_RAD * this.turnRadius(p));
+      }
+      s.moved += r.steps;
+      this.events.emit('partTurn', { id: s.id, steps: r.steps, x: p.x, y: p.y });
+    }
+    s.lastBlocked = r.blocked;
+    if (r.blocked) this.events.emit('partBlocked', { id: s.id, reason: r.blocked, x: p.x, y: p.y });
+  }
+
+  private turnRadius(p: Part): number {
+    const k = turnKnob(p);
+    return k ? Math.max(30, hyp(k.x - p.x, k.y - p.y)) : 60;
+  }
+
+  /** Let go of the grabbed toy; with `stow`, a toy from the tray goes back into it. */
+  endPartDrag(stow = false): void {
+    const s = this.partDrag;
+    if (!s) return;
+    this.partDrag = null;
+    const before = this.editBefore!;
+    const edit = this.curEdit!;
+    this.editBefore = null;
+    this.curEdit = null;
+    const p = this.table.parts.find((q) => q.id === s.id);
+    if (!p) return;
+    let stowed = false;
+    if (stow && p.placed !== undefined && this.tray[p.placed] && (s.free || !this.tokenMode || this.tokens >= 1)) {
+      const item = this.tray[p.placed]!;
+      for (const id of removeParts(this, s.id)) this.fresh.delete(id);
+      item.count++;
+      stowed = true;
+    } else if (stow && p.placed === undefined) {
+      this.events.emit('partBlocked', { id: s.id, reason: 'locked', x: p.x, y: p.y });
+    }
+    const changed = stowed || s.moved > 0;
+    if (changed) {
+      if (!s.free && (stowed || (s.turn ? s.moved > 0 : s.moved >= 2))) this.spendToken(p.x, p.y);
+      if (edit.op === 'move' && stowed) edit.stow = true;
+      this.commitEdit(before, edit);
+    }
+    this.events.emit('partDrop', { id: s.id, stowed, x: p.x, y: p.y });
+  }
+
+  /** The direction a toy from tray item `item` would be put down facing. */
+  placementDir(item: number): Dir | null {
+    const it = this.tray[item];
+    if (!it || !('dir' in it.preset)) return null;
+    if (this.rules.arrows === 'random' && ARROW_PARTS.includes(it.preset.kind)) {
+      // Spun at random, but the same spin again after an undo: no re-rolling.
+      return dirOf(rngFor(this.seed, 'place', this.shots, item, it.count).int(TURN_STEPS));
+    }
+    return { ...it.preset.dir };
+  }
+
+  /** The toy tray item `item` would become if put down now (direction settled). */
+  private presetFor(item: number): PartPreset | null {
+    const it = this.tray[item];
+    if (!it || it.count <= 0) return null;
+    const preset = structuredClone(it.preset);
+    const dir = this.placementDir(item);
+    if (dir && 'dir' in preset) preset.dir = dir;
+    return preset;
+  }
+
+  /** Whether tray item `item` would fit at (x, y) (for the ghost while dragging it out). */
+  canPlace(item: number, x: number, y: number): boolean {
+    const preset = this.presetFor(item);
+    if (!preset || !this.canReshape || !pointInPolygon(x, y, this.geom.poly)) return false;
+    const host = { table: cloneTable(this.table), geom: this.geom, balls: this.balls.map((b) => ({ ...b })), hunger: this.hunger };
+    return placePart(host, preset, q64(x), q64(y)).ids.length > 0;
+  }
+
+  /** Put tray item `item` down at (x, y). Free; the toy can be moved freely until the shot. */
+  placeFromTray(item: number, x: number, y: number): boolean {
+    if (!this.canReshape) return false;
+    this.endEdits();
+    x = q64(x);
+    y = q64(y);
+    const preset = this.presetFor(item);
+    if (!preset) return false;
+    const before = this.snapEdit();
+    const r = placePart(this, preset, x, y, { placed: item });
+    if ('blocked' in r) {
+      this.events.emit('partBlocked', { id: null, reason: r.blocked, x, y });
+      return false;
+    }
+    this.tray[item]!.count--;
+    for (const id of r.ids) this.fresh.add(id);
+    this.commitEdit(before, { op: 'place', item, x, y });
+    this.events.emit('partPlaced', { ids: r.ids, item, x, y, pushed: r.pushed });
+    return true;
+  }
+}
+
+function partTurnIndex(p: Part): number {
+  if (p.kind === 'arc') {
+    const k = turnKnob(p)!;
+    return nearestDir(k.x - p.x, k.y - p.y);
+  }
+  const d = (p as { dir: Dir }).dir;
+  return nearestDir(d.x, d.y);
 }

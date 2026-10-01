@@ -485,6 +485,19 @@ export class Sfx {
     this.tone('sine', 3100, 0.18, 0.04);
   }
 
+  /** A toy put down on the felt: a wooden thunk. */
+  thunk(): void {
+    this.tone('sine', 160, 0.12, 0.35, { f1: 70 });
+    this.hiss(0.06, 0.25, 'lowpass', 900);
+    this.tone('triangle', 520, 0.05, 0.08, { delay: 0.02 });
+  }
+
+  /** A grab token spent: a little coin blip. */
+  coin(): void {
+    this.tone('square', 988, 0.07, 0.06, { lp: 3000 });
+    this.tone('square', 1319, 0.16, 0.06, { lp: 3000, delay: 0.07 });
+  }
+
   /** Sand: a soft gritty thud. */
   fwump(): void {
     if (!this.allow(4)) return;
