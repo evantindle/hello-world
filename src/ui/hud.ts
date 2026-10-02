@@ -304,14 +304,16 @@ export class Hud {
   /**
    * CSS px the HUD takes up along each edge (the camera keeps the table clear of them): the top
    * and bottom bars, the toy tray (a column on the left, or a row along the bottom), and the
-   * shoot controls' box in the bottom-right corner.
+   * shoot controls' box in the bottom-right corner. `mid` is the bottom of what sits over the middle
+   * of the table's top edge (the rack, a level's goal).
    */
-  bands(): { top: number; bottom: number; left: number; cluster: DOMRect } {
+  bands(): { top: number; mid: number; bottom: number; left: number; cluster: DOMRect } {
     const root = this.hint.parentElement!.parentElement!;
     const top = root.querySelector('.hud-top')!.getBoundingClientRect();
     const bottom = root.querySelector('.hud-bottom')!.getBoundingClientRect();
     // On narrow screens a level's goal hangs below the top bar.
     const goal = this.goal.textContent ? this.goal.getBoundingClientRect().bottom : 0;
+    const rack = this.rack.getBoundingClientRect();
     let left = 0;
     let low = Math.max(0, window.innerHeight - bottom.top);
     if (this.tray.el.classList.contains('has')) {
@@ -321,6 +323,7 @@ export class Hud {
     }
     return {
       top: Math.max(top.bottom, goal),
+      mid: Math.max(goal, rack.width > 0 ? rack.bottom : 0),
       bottom: low,
       left,
       cluster: this.cluster.getBoundingClientRect(),

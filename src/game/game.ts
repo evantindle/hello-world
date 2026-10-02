@@ -65,6 +65,8 @@ export type Phase = 'title' | 'spin' | 'plan' | 'strike' | 'sim' | 'resolve' | '
 export interface TurnResult {
   potted: Ball[];
   scratch: boolean;
+  /** The scratch cost a stroke (not when a level asks for one). */
+  penalty: boolean;
   /** Style points for this shot, and for the game so far. */
   style: number;
   totalStyle: number;
@@ -729,7 +731,9 @@ export class Game implements ReshapeHost {
     } else {
       this.streak = 0;
     }
-    if (this.scratched) this.penalties++;
+    // A scratch costs a stroke, unless sinking the cue ball is the level's goal.
+    const penalty = this.scratched && !this.scratchWanted();
+    if (penalty) this.penalties++;
     const log = this.world.log;
     const style = styleOf(log);
     this.style = Math.max(0, this.style + style);
@@ -790,6 +794,7 @@ export class Game implements ReshapeHost {
     this.events.emit('turnResult', {
       potted,
       scratch: this.scratched,
+      penalty,
       style,
       totalStyle: this.style,
       streak: this.streak,
@@ -807,6 +812,13 @@ export class Game implements ReshapeHost {
     // Free Play ends when the table is clear; a Classic level ends when the judge says so.
     if (this.rules.mode === 'classic') this.enter(this.verdict ? 'over' : 'spin');
     else this.enter(this.objectsLeft === 0 ? 'over' : 'spin');
+  }
+
+  /** This shot's scratch is what the level asked for (a Classic "scratch into..." goal). */
+  private scratchWanted(): boolean {
+    const goal = this.rules.goal;
+    if (this.rules.mode !== 'classic' || goal?.kind !== 'scratch' || !this.scratchPocket) return false;
+    return !goal.pockets || goal.pockets.includes(this.scratchPocket.vid);
   }
 
   /** Grab tokens used so far (Classic). */

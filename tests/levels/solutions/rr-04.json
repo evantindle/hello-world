@@ -1,0 +1,19 @@
+{
+ "level": "rr-04",
+ "stars": 3,
+ "strokes": [
+  {
+   "edits": [
+    {
+     "op": "place",
+     "item": 0,
+     "x": 120,
+     "y": 270
+    }
+   ],
+   "dial": 250,
+   "ex": 0,
+   "ey": 0
+  }
+ ]
+}

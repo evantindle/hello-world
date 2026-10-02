@@ -113,6 +113,17 @@ const resize = () => {
   cam.padLeft = bands.left > 0 ? bands.left + 4 : 0;
   cam.padRight = 0;
   renderer.resize();
+  if (!tall) {
+    // A table that reaches up past the usual top rail (some levels and remixes) must not slide
+    // under the top bar: give it just enough room.
+    let top = Infinity;
+    for (const v of game.table.verts) top = Math.min(top, v.y);
+    const clear = () => cam.homeToScreen(TABLE_W / 2, top - RAIL_W).y >= bands.mid + 4;
+    for (let p = 8; p <= 240 && !clear(); p += 8) {
+      cam.padTop = p;
+      renderer.resize();
+    }
+  }
   const c = bands.cluster;
   if (!tall && c.width > 0) {
     // Keep the bottom-right pocket out from under the shoot controls, sliding the table left

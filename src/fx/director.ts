@@ -501,10 +501,10 @@ export class Director {
 
     ev.on('turnResult', (res) => {
       const k = res.potted.length;
-      if (res.scratch) {
+      if (res.scratch && res.penalty) {
         sfx.trombone();
         hud.toast('SCRATCH! +1', 'bad');
-      }
+      } else if (res.scratch) hud.toast('IN YOU GO!', 'wow');
       if (k >= 2) {
         hud.toast(k === 2 ? 'DOUBLE GULP!' : k === 3 ? 'TRIPLE GULP!' : `MEGA GULP ×${k}!`, 'wow');
         sfx.ding(k + 2);

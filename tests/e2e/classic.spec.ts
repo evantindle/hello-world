@@ -11,8 +11,8 @@ test('classic: win level 1 with its recorded solution; the stars are kept and le
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await boot(page, '?mute=1', errors);
   await page.getByRole('button', { name: 'Classic' }).click();
-  await expect(page.getByRole('button', { name: /Level 2/ })).toBeDisabled();
-  await page.getByRole('button', { name: /Level 1/ }).click();
+  await expect(page.getByRole('button', { name: /^Level 2 / })).toBeDisabled();
+  await page.getByRole('button', { name: /^Level 1:/ }).click();
   await expect(page.locator('.intro-card')).toContainText('BEND HERE');
   await page.screenshot({ path: `${SHOTS}/10-intro.png` });
   await page.getByRole('button', { name: 'Play', exact: true }).click();

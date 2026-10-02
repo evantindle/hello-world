@@ -40,6 +40,11 @@ export interface SolveOpts {
   /** Nodes kept between strokes, and single-grab edits extended with a second grab. */
   beam?: number;
   pairs?: number;
+  /** A second edit is only tried at its first edit's best few dial/English settings. */
+  pairSettings?: number;
+  /** Grabs: every `dirStep`th of the 72 directions, at these fractions of the reach. */
+  dirStep?: number;
+  radii?: number[];
   log?: (s: string) => void;
 }
 
@@ -47,6 +52,9 @@ interface Node {
   strokes: SolutionStroke[];
   score: number;
 }
+
+/** Dial (thousandths), English x, English y. */
+type Setting = [number, number, number];
 
 interface Outcome {
   win: boolean;
@@ -61,6 +69,8 @@ const DEFAULT_ENGLISH: [number, number][] = [
   [-0.7, 0],
   [0, 0.7],
   [0, -0.7],
+  [0, 1],
+  [0, -1],
 ];
 
 function replay(def: LevelDef, strokes: SolutionStroke[]): Game | null {
@@ -135,7 +145,11 @@ function evaluate(g: Game, def: LevelDef, dial: number, ex: number, ey: number):
   const p = g.previewNow(SIM_TIMEOUT, true);
   const { balls, log } = p.final!;
   const order = [...g.pottedOrder, ...log.pots.filter((q) => q.ball !== 0).map((q) => q.ball)];
-  const score = g.score + 1 + (log.scratch ? 1 : 0);
+  // A scratch costs a stroke, unless the goal is to scratch (into one of these pockets).
+  const goal = def.goal;
+  const wanted =
+    goal.kind === 'scratch' && !!log.scratch && (!goal.pockets || goal.pockets.includes(log.scratch.pocket));
+  const score = g.score + 1 + (log.scratch && !wanted ? 1 : 0);
   const v = judge(def.goal, { balls, pottedOrder: order, log, score, shotLimit: def.shots }, bullseyes(g));
   if (v.result === 'win') return { win: true, fail: false, score: 1e9 };
   if (v.result === 'fail') return { win: false, fail: true, score: -1e9 };
@@ -143,7 +157,7 @@ function evaluate(g: Game, def: LevelDef, dial: number, ex: number, ey: number):
 }
 
 /** Edit lists for one stroke that add at most one grab (or a toy) to `base`. */
-function* moreEdits(g: Game, tokensLeft: number): Generator<Edit> {
+function* moreEdits(g: Game, tokensLeft: number, dirStep: number, radii: number[]): Generator<Edit> {
   // Toys from the tray (free); facings are tried afterwards for the promising ones.
   for (let item = 0; item < g.tray.length; item++) {
     if (g.tray[item]!.count <= 0) continue;
@@ -159,9 +173,9 @@ function* moreEdits(g: Game, tokensLeft: number): Generator<Edit> {
   for (const h of listHandles(g.table)) {
     if (h.locked) continue;
     const vid = h.kind === 'vertex' ? g.table.verts[h.index]!.id : -1;
-    for (const f of [0.35, 0.7, 1]) {
+    for (const f of radii) {
       const r = f * g.reach;
-      for (let k = 0; k < DIRS.length; k += 4) {
+      for (let k = 0; k < DIRS.length; k += dirStep) {
         const d = DIRS[k]!;
         const path = [h.x, h.y, h.x + (d[0] * r) / 1000, h.y + (d[1] * r) / 1000];
         yield h.kind === 'edge' ? { op: 'grab', vid, edge: h.index, path } : { op: 'grab', vid, path };
@@ -182,7 +196,11 @@ export function solve(def: LevelDef, limits: SolveLimits, opts: SolveOpts = {}):
   const english = def.english ? (opts.english ?? DEFAULT_ENGLISH) : ([[0, 0]] as [number, number][]);
   const beamSize = opts.beam ?? 8;
   const pairs = opts.pairs ?? 12;
+  const pairSettings = opts.pairSettings ?? 4;
+  const dirStep = opts.dirStep ?? 4;
+  const radii = opts.radii ?? [0.35, 0.7, 1];
   const log = opts.log ?? (() => {});
+  const allSettings: Setting[] = dials.flatMap((d) => english.map(([ex, ey]): Setting => [d, ex, ey]));
   let beam: Node[] = [{ strokes: [], score: 0 }];
   for (let k = 0; k < limits.strokes; k++) {
     const next: Node[] = [];
@@ -190,36 +208,39 @@ export function solve(def: LevelDef, limits: SolveLimits, opts: SolveOpts = {}):
       const g = replay(def, node.strokes);
       if (!g) continue;
       const tokensLeft = limits.tokens - g.tokensSpent;
-      // Tries one edit list at every setting; returns the best outcome (and a win, if any).
+      // Tries one edit list at each setting; returns the best outcome, a win if there is one,
+      // and the most promising settings (for trying a second edit on top).
       const tryEdits = (
         edits: Edit[],
-      ): { best: number; win: SolutionStroke | null; stroke: SolutionStroke | null } => {
+        settings: Setting[],
+      ): { best: number; win: SolutionStroke | null; stroke: SolutionStroke | null; tops: Setting[] } => {
         g.reset();
         // Only this candidate's own edits (not the resets between candidates).
         const mark = g.edits.length;
         for (const e of edits) g.applyEdit(e);
         const recorded = structuredClone(g.edits.slice(mark));
-        const extra = g.tokensSpent > limits.tokens;
-        let best = -Infinity;
-        let bestStroke: SolutionStroke | null = null;
-        if (!extra) {
-          for (const dial of dials) {
-            for (const [ex, ey] of english) {
-              const o = evaluate(g, def, dial, ex, ey);
-              const stroke = { edits: recorded, dial, ex, ey };
-              if (o.win) return { best: Infinity, win: stroke, stroke };
-              if (o.score > best) {
-                best = o.score;
-                bestStroke = stroke;
-              }
-            }
+        if (g.tokensSpent > limits.tokens) return { best: -Infinity, win: null, stroke: null, tops: [] };
+        const tried: { score: number; s: Setting }[] = [];
+        for (const s of settings) {
+          const o = evaluate(g, def, s[0], s[1], s[2]);
+          if (o.win) {
+            const stroke = { edits: recorded, dial: s[0], ex: s[1], ey: s[2] };
+            return { best: Infinity, win: stroke, stroke, tops: [] };
           }
+          tried.push({ score: o.score, s });
         }
-        return { best, win: null, stroke: bestStroke };
+        tried.sort((a, b) => b.score - a.score);
+        const top = tried[0];
+        return {
+          best: top ? top.score : -Infinity,
+          win: null,
+          stroke: top ? { edits: recorded, dial: top.s[0], ex: top.s[1], ey: top.s[2] } : null,
+          tops: tried.slice(0, pairSettings).map((t) => t.s),
+        };
       };
-      const scored: { edits: Edit[]; best: number; stroke: SolutionStroke | null }[] = [];
-      const consider = (edits: Edit[]): Solution | null => {
-        const r = tryEdits(edits);
+      const scored: { edits: Edit[]; best: number; stroke: SolutionStroke | null; tops: Setting[] }[] = [];
+      const consider = (edits: Edit[], settings = allSettings): Solution | null => {
+        const r = tryEdits(edits, settings);
         if (r.win) {
           const sol: Solution = { level: def.id, stars: 0, strokes: [...node.strokes, r.win] };
           const end = playSolution(def, sol);
@@ -228,13 +249,13 @@ export function solve(def: LevelDef, limits: SolveLimits, opts: SolveOpts = {}):
             if (sol.stars >= (limits.stars ?? 1)) return sol;
           } else log(`  a predicted win did not replay (stroke ${k + 1}); carrying on`);
         }
-        scored.push({ edits, best: r.best, stroke: r.stroke });
+        scored.push({ edits, best: r.best, stroke: r.stroke, tops: r.tops });
         return null;
       };
       const found = consider([]);
       if (found) return found;
       // Single edits, then facings for placed toys and pairs of the best ones.
-      const singles: Edit[] = [...moreEdits(g, tokensLeft)];
+      const singles: Edit[] = [...moreEdits(g, tokensLeft, dirStep, radii)];
       g.reset();
       for (const e of singles) {
         const s = consider([e]);
@@ -248,9 +269,9 @@ export function solve(def: LevelDef, limits: SolveLimits, opts: SolveOpts = {}):
         const placedId =
           t.edits[0]!.op === 'place' ? (g.table.parts[g.table.parts.length - 1]?.id ?? -1) : -1;
         const followUps: Edit[] = placedId >= 0 ? [...turnsFor(g, placedId)] : [];
-        followUps.push(...moreEdits(g, limits.tokens - g.tokensSpent));
+        followUps.push(...moreEdits(g, limits.tokens - g.tokensSpent, dirStep, radii));
         for (const e of followUps) {
-          const s = consider([...t.edits, e]);
+          const s = consider([...t.edits, e], t.tops);
           if (s) return s;
         }
       }
