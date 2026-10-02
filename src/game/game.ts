@@ -52,6 +52,8 @@ import {
 import { makeRemix } from './remix';
 import { findRespawnSpot, loadBest, loadBestStyle, rackBalls, rankFor, saveBest, type Rank } from './rules';
 import { beats, styleOf } from './scoring';
+import { judge, starsFor, type Verdict } from './goals';
+import { loadProgress, recordWin } from './progress';
 import { cloneLog, type Edit, type TurnRecord } from './record';
 import { V1_RULES, type Ruleset } from './ruleset';
 import { hashBoard, snapState } from './serialize';
@@ -74,6 +76,15 @@ export interface TurnResult {
 }
 
 export interface GameOverInfo {
+  /** Free Play always ends in a win (the table is cleared); a Classic level can be lost. */
+  result: 'win' | 'fail';
+  /** Why a Classic level was lost. */
+  reason: string | null;
+  /** Classic: stars earned (0 on a loss), the stroke limit, and grabs used. */
+  stars: number;
+  levelId: string | null;
+  shotLimit: number | null;
+  tokensSpent: number;
   score: number;
   shots: number;
   penalties: number;
@@ -180,6 +191,8 @@ export interface GameSetup {
   remix?: boolean;
   /** How many twists the remix deals (default 2). */
   remixLevel?: number;
+  /** The table's name (a level's), shown on the HUD. */
+  name?: string;
 }
 
 export class Game implements ReshapeHost {
@@ -229,6 +242,9 @@ export class Game implements ReshapeHost {
   bestStyle = 0;
   /** The table's name (remixes and levels), or null. */
   tableName: string | null = null;
+  /** Classic: every object ball potted so far, in order, and how the level ended. */
+  pottedOrder: number[] = [];
+  private verdict: Verdict | null = null;
   /** Style points this game. */
   style = 0;
   /** Fast-forward held: the sim runs FF_SCALE times faster (and skips the slow-mo). */
@@ -373,7 +389,7 @@ export class Game implements ReshapeHost {
     this.levelId = s.levelId ?? null;
     this.seed = s.seed >>> 0;
     const rx = s.remix ? makeRemix(this.seed, s.remixLevel ?? 2) : null;
-    this.tableName = rx ? rx.name : null;
+    this.tableName = s.name ?? (rx ? rx.name : null);
     this.table = s.table ? cloneTable(s.table) : rx ? rx.table : createTable();
     this.hunger = 0;
     this.geom = buildGeom(this.table, this.hunger);
@@ -391,6 +407,8 @@ export class Game implements ReshapeHost {
     this.streak = 0;
     this.bestStreak = 0;
     this.style = 0;
+    this.pottedOrder = [];
+    this.verdict = null;
     this.potted = [];
     this.scratched = false;
     this.respawn = null;
@@ -422,10 +440,19 @@ export class Game implements ReshapeHost {
     this.enter('spin');
   }
 
-  /** The same kind of game again (same rules and layout), with a new seed unless given one. */
+  /** A new game from the given setup that waits on the title phase (behind a level's intro card)
+   * until start(). */
+  prepare(s: GameSetup): void {
+    this.setup(s);
+    this.enter('title');
+  }
+
+  /** The same kind of game again (same rules and layout), with a new seed unless given one. A
+   * Classic level keeps its own seed (its respawns and black holes are part of the puzzle). */
   restart(seed?: number): void {
     const last = this.lastSetup ?? { rules: this.rules, seed: 0 };
-    this.load({ ...last, seed: seed ?? randomSeed() });
+    const keep = this.rules.mode === 'classic';
+    this.load({ ...last, seed: seed ?? (keep ? last.seed : randomSeed()) });
   }
 
   /** Stroke `k`'s landing angle: a level's sequence, or one independent random draw per stroke. */
@@ -740,6 +767,26 @@ export class Game implements ReshapeHost {
     if (this.rules.hunger) this.hunger = potted.length > 0 ? 0 : Math.min(MAX_HUNGER, this.hunger + 1);
     if (this.hunger !== prevHunger || rebuild) this.geom = buildGeom(this.table, this.hunger);
     if (this.hunger !== prevHunger) this.events.emit('hunger', { level: this.hunger, prev: prevHunger });
+    // Classic: the judge calls it after every stroke.
+    const goal = this.rules.goal;
+    if (this.rules.mode === 'classic' && goal) {
+      for (const b of potted) this.pottedOrder.push(b.num);
+      const bullseyes = this.table.parts.flatMap((p) =>
+        p.kind === 'bullseye' ? [{ id: p.id, x: p.x, y: p.y, r: p.r }] : [],
+      );
+      const v = judge(
+        goal,
+        {
+          balls: this.balls,
+          pottedOrder: this.pottedOrder,
+          log,
+          score: this.score,
+          shotLimit: this.rules.shotLimit,
+        },
+        bullseyes,
+      );
+      if (v.result !== 'continue') this.verdict = v;
+    }
     this.events.emit('turnResult', {
       potted,
       scratch: this.scratched,
@@ -751,27 +798,73 @@ export class Game implements ReshapeHost {
       score: this.score,
       left: this.objectsLeft,
     });
-    if (this.scratched && this.objectsLeft > 0) this.enter('respawn');
+    if (this.verdict) this.enter('over');
+    else if (this.scratched && (this.rules.mode === 'classic' || this.objectsLeft > 0)) this.enter('respawn');
     else this.nextTurn();
   }
 
   private nextTurn(): void {
-    this.enter(this.objectsLeft === 0 ? 'over' : 'spin');
+    // Free Play ends when the table is clear; a Classic level ends when the judge says so.
+    if (this.rules.mode === 'classic') this.enter(this.verdict ? 'over' : 'spin');
+    else this.enter(this.objectsLeft === 0 ? 'over' : 'spin');
+  }
+
+  /** Grab tokens used so far (Classic). */
+  get tokensSpent(): number {
+    const lim = this.rules.reshape;
+    return lim.kind === 'tokens' ? lim.tokens - this.tokens : 0;
+  }
+
+  /** Back to the menus (the home screen), dropping whatever was going on. */
+  quit(): void {
+    this.endEdits();
+    if (this.charging) this.cancelShot();
+    if (this.slowmo) this.setSlowmo(false);
+    this.enter('title');
   }
 
   private finish(): void {
     const score = this.score;
-    const isBest = beats(
-      score,
-      this.style,
-      this.best === null ? null : { score: this.best, style: this.bestStyle },
-    );
-    if (isBest) {
-      this.best = score;
-      this.bestStyle = this.style;
-      if (this.persist) saveBest(score, this.style);
+    const classic = this.rules.mode === 'classic';
+    const v = this.verdict;
+    const result: 'win' | 'fail' = classic && v?.result === 'fail' ? 'fail' : 'win';
+    let stars = 0;
+    let isBest = false;
+    if (classic) {
+      if (result === 'win' && this.rules.stars) {
+        stars = starsFor(this.rules.stars, {
+          score,
+          tokensSpent: this.tokensSpent,
+          scratched: this.penalties > 0,
+          eggIntact: !this.balls.some((b) => b.variant === 'egg' && b.gone === 'broken'),
+        });
+        if (this.persist && this.levelId) {
+          // A better result than before (more stars, or fewer strokes) is a new best.
+          const before = loadProgress().levels[this.levelId];
+          isBest = !!before && (stars > before.stars || score < before.best);
+          recordWin(this.levelId, stars, score);
+        }
+      }
+    } else {
+      // Free Play bests: fewest strokes, then most style.
+      isBest = beats(
+        score,
+        this.style,
+        this.best === null ? null : { score: this.best, style: this.bestStyle },
+      );
+      if (isBest) {
+        this.best = score;
+        this.bestStyle = this.style;
+        if (this.persist) saveBest(score, this.style);
+      }
     }
     const info: GameOverInfo = {
+      result,
+      reason: v?.result === 'fail' ? v.reason : null,
+      stars,
+      levelId: this.levelId,
+      shotLimit: this.rules.shotLimit,
+      tokensSpent: this.tokensSpent,
       score,
       shots: this.shots,
       penalties: this.penalties,

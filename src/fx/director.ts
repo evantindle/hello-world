@@ -111,7 +111,13 @@ export class Director {
     });
 
     ev.on('phase', ({ to }) => {
-      if (to === 'spin' && game.shots === 0 && game.tableName && game.tableName !== 'THE CLASSIC') {
+      if (
+        to === 'spin' &&
+        game.shots === 0 &&
+        game.rules.mode === 'free' &&
+        game.tableName &&
+        game.tableName !== 'THE CLASSIC'
+      ) {
         // A new remixed table: say what it is.
         this.after(0.2, () => hud.toast(game.tableName!, 'wow'));
       }
@@ -134,12 +140,30 @@ export class Director {
         this.bawked = false;
       } else if (to === 'over') {
         this.resetCamera();
+        const info = game.lastOver;
+        if (info?.result === 'fail') {
+          // (╯°□°)╯︵ ┻━┻
+          fx.startFlip(game);
+          hud.flipBanner();
+          sfx.trombone();
+          this.cam.addShake(0.25);
+          this.after(0.85, () => {
+            sfx.crash();
+            this.cam.addShake(0.9);
+          });
+          this.after(1.2, () => hud.showOver(info));
+          return;
+        }
         fx.confettiRain = 5;
         fx.fireworks = 4.5;
         fx.balls.setMood(0, 'happy', 30);
         sfx.fanfare();
         this.after(1.1, () => {
-          if (game.lastOver) hud.showOver(game.lastOver);
+          if (!info) return;
+          hud.showOver(info);
+          // The win card's stars land one by one.
+          if (info.levelId)
+            for (let i = 0; i < info.stars; i++) this.after(0.35 + i * 0.3, () => sfx.star(i));
         });
       } else if (to === 'title') {
         this.resetCamera();

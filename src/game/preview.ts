@@ -2,6 +2,7 @@ import { H, R } from '../config';
 import { subSeed } from '../core/rng';
 import type { TableGeom } from '../geom/table';
 import { launchFrom, type ShotQ } from '../physics/launch';
+import { cloneLog, type TurnLog } from '../physics/log';
 import { createWorld, stepWorld, type Ball, type PhysEvent, type World } from '../physics/world';
 
 /**
@@ -72,6 +73,8 @@ export interface Preview {
   /** Seconds of the shot simulated. */
   span: number;
   done: boolean;
+  /** Exhaustive previews: every ball as it ends up, and the shot's log (for solvers and tests). */
+  final?: { balls: Ball[]; log: TurnLog };
 }
 
 /** What the preview needs to know about the shot to come. */
@@ -395,6 +398,7 @@ export class Previewer {
       tr.after = Math.min(after, kept.length);
       if (tr.segs.length > 0 || tr.drop !== null) preview.tracks.push(tr);
     });
+    if (job.exhaustive) preview.final = { balls: balls.map((b) => ({ ...b })), log: cloneLog(world.log) };
     this.current = preview;
     this.cache.push(preview);
     if (this.cache.length > CACHE) this.cache.shift();

@@ -15,7 +15,8 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "check": "npm run typecheck && npm run lint && npm run test",
-    "balance": "vitest run --config vitest.tools.config.ts tools/balance.tool.ts --silent=false"
+    "balance": "vitest run --config vitest.tools.config.ts tools/balance.tool.ts --silent=false",
+    "solve": "vitest run --config vitest.tools.config.ts tools/solve.tool.ts --silent=false"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

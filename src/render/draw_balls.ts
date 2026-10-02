@@ -1,4 +1,4 @@
-import { COLORS, R, RESPAWN_TIME } from '../config';
+import { COLORS, R, RESPAWN_TIME, VARIANT_COLORS } from '../config';
 import { cubicIn, quadOut } from '../core/easing';
 import { TAU } from '../core/vec';
 import type { BallFx } from '../fx/ballfx';
@@ -143,7 +143,7 @@ export function drawBall(
   // Ghosts are see-through.
   if (b.variant === 'ghost') ctx.globalAlpha *= 0.55;
 
-  const base = b.kind === 'cue' ? COLORS.cue : (VARIANT_COLOR[b.variant] ?? b.color);
+  const base = b.kind === 'cue' ? COLORS.cue : (VARIANT_COLORS[b.variant] ?? b.color);
   ctx.beginPath();
   ctx.arc(0, 0, R, 0, TAU);
   ctx.fillStyle = shade(base, -0.28);
@@ -194,13 +194,6 @@ export function drawBall(
   ctx.restore();
 }
 
-const VARIANT_COLOR: Partial<Record<Ball['variant'], string>> = {
-  bowling: '#2e3150',
-  egg: '#fff3dc',
-  bomb: '#26283d',
-  chicken: '#fffdf5',
-  golden: '#ffcc33',
-};
 
 const EGG_SPECKS: [number, number][] = [
   [-0.4, -0.2],

@@ -1,29 +1,10 @@
-import { expect, test, type Page } from '@playwright/test';
-
-declare global {
-  interface Window {
-    // Loosely typed on purpose: this is the page's debug surface (src/debug/api.ts).
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    __bendy: any;
-  }
-}
-
-const SHOTS = 'e2e-out';
-
-async function boot(page: Page, query: string, errors: string[]) {
-  page.on('pageerror', (e) => errors.push(String(e)));
-  page.on('console', (m) => {
-    if (m.type() === 'error') errors.push(m.text());
-  });
-  await page.goto(`/${query}`);
-  await page.waitForFunction(() => window.__bendy?.ready === true);
-  await page.evaluate(() => document.fonts.ready);
-}
+import { expect, test } from '@playwright/test';
+import { boot, SHOTS } from './helpers';
 
 test('a full turn: spin, bend, smack, settle', async ({ page }) => {
   const errors: string[] = [];
   await boot(page, '?seed=42&mute=1&remix=0', errors);
-  await expect(page.getByRole('button', { name: 'PLAY!' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Free Play' })).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/01-title.png` });
 
   await page.evaluate(() => {
@@ -70,10 +51,10 @@ test('a full turn: spin, bend, smack, settle', async ({ page }) => {
 
 test('real pointer input: drag a knob, turn the dial, put on English, press SMACK', async ({ page }) => {
   const errors: string[] = [];
-  // Reduced motion stops the bouncing PLAY button (and exercises that CSS path).
+  // Reduced motion stops the bouncing buttons (and exercises that CSS path).
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await boot(page, '?seed=9&mute=1&remix=0', errors);
-  await page.getByRole('button', { name: 'PLAY!' }).click();
+  await page.getByRole('button', { name: 'Free Play' }).click();
   await page.waitForFunction(() => window.__bendy.phase() === 'spin');
   // Tap the table to skip the spin.
   await page.mouse.click(640, 360);

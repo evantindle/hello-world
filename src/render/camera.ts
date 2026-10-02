@@ -87,8 +87,13 @@ export class Camera {
 
   /** Apply the world transform (including shake) to a context whose canvas is css*dpr sized. */
   apply(ctx: CanvasRenderingContext2D): void {
-    const s = this.scale;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    this.applyOn(ctx);
+  }
+
+  /** The world transform on top of whatever screen-space transform the context already has. */
+  applyOn(ctx: CanvasRenderingContext2D): void {
+    const s = this.scale;
     ctx.translate(this.centerX + this.shakeX, this.centerY + this.shakeY);
     if (this.rotated) ctx.rotate(Math.PI / 2);
     ctx.rotate(this.shakeRot);

@@ -6,6 +6,7 @@ import type { Camera } from './camera';
 import { drawBalls, drawBallShadows, star } from './draw_balls';
 import { drawCue, drawGuide, drawSpeedLines } from './draw_cue';
 import { drawEditOver, drawEditUnder } from './draw_edit';
+import { applyFlip, drawFlyingBalls, drawUnderside, FLIP_T, flipPose } from './draw_flip';
 import { drawFloorParts } from './draw_floor';
 import { PreviewView } from './draw_preview';
 import { drawPartShadows, drawRaisedParts } from './draw_parts';
@@ -43,8 +44,12 @@ export class Renderer {
     const { ctx, game, fx, cam } = this;
     ctx.setTransform(cam.dpr, 0, 0, cam.dpr, 0, 0);
     ctx.clearRect(0, 0, cam.cssW, cam.cssH);
-    cam.apply(ctx);
     const vt = buildVisual(game.table, fx.jelly);
+    if (fx.flip) {
+      this.drawFlip(vt);
+      return;
+    }
+    cam.apply(ctx);
     drawTableBody(ctx, game, fx, vt, cam);
     drawPockets(ctx, game, fx);
     drawFloorParts(ctx, game, fx, cam, vt);
@@ -69,7 +74,33 @@ export class Renderer {
     drawEditOver(ctx, game, fx, cam, view);
     drawParticles(ctx, fx, cam.upright);
     fx.pops.draw(ctx, cam.upright);
+    this.drawScreenFx();
+  }
 
+  /** A lost level: the table flips over and falls away; the balls tumble past it. */
+  private drawFlip(vt: ReturnType<typeof buildVisual>): void {
+    const { ctx, game, fx, cam } = this;
+    const pose = flipPose(fx.flip!.t);
+    if (fx.flip!.t < FLIP_T + 0.6) {
+      applyFlip(ctx, cam, game, pose);
+      if (pose.sy < 0) drawUnderside(ctx, vt);
+      else {
+        drawTableBody(ctx, game, fx, vt, cam);
+        drawPockets(ctx, game, fx);
+        drawFloorParts(ctx, game, fx, cam, vt);
+        drawPartShadows(ctx, game, cam);
+        drawRaisedParts(ctx, game, fx, cam);
+      }
+    }
+    cam.apply(ctx);
+    drawFlyingBalls(ctx, game, fx, cam);
+    drawParticles(ctx, fx, cam.upright);
+    fx.pops.draw(ctx, cam.upright);
+    this.drawScreenFx();
+  }
+
+  private drawScreenFx(): void {
+    const { ctx, fx, cam } = this;
     ctx.setTransform(cam.dpr, 0, 0, cam.dpr, 0, 0);
     if (fx.vignette > 0.01) {
       const w = cam.cssW;

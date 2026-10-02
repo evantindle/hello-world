@@ -5,7 +5,9 @@ import { installDebugApi } from './debug/api';
 import { Director } from './fx/director';
 import { Fx } from './fx/fx';
 import { Autopilot } from './game/demo';
-import { Game } from './game/game';
+import { Game, type GameSetup } from './game/game';
+import { levelById } from './game/levels/rec-room';
+import { setupFromLevel } from './game/levels/setup';
 import { FREE_RULES } from './game/ruleset';
 import { fullTray } from './game/toys';
 import { loadBest } from './game/rules';
@@ -47,9 +49,26 @@ const toggleMute = (): boolean => {
   sfx.setMuted(!sfx.muted);
   return sfx.muted;
 };
+const freeSetup = (): GameSetup => ({
+  rules: FREE_RULES,
+  seed: randomSeed(),
+  tray: toys ? fullTray() : undefined,
+  remix,
+  remixLevel: loadBest() === null ? 0 : undefined,
+});
 const hud = new Hud(hudRoot, game, {
+  freePlay: () => {
+    // The game dealt at boot waits on the title screen; after that, every Free Play is a new deal.
+    if (game.phase === 'title' && game.rules.mode === 'free' && game.shots === 0 && !game.lastOver)
+      game.start();
+    else game.load(freeSetup());
+  },
+  prepareLevel: (def) => game.prepare(setupFromLevel(def)),
   start: () => game.start(),
   restart: () => game.restart(),
+  quit: () => game.quit(),
+  screenTurn: () => (cam.rotated ? Math.PI / 2 : 0),
+  dev: params.get('dev') === '1',
   toggleMute,
   isMuted: () => sfx.muted,
   gesture,
@@ -61,6 +80,9 @@ const hud = new Hud(hudRoot, game, {
   },
   beginPlace: (item, e) => input.beginPlace(item, e),
 });
+// ?level=rr-03: straight to that level's intro card.
+const startLevel = levelById(params.get('level') ?? '');
+if (startLevel) hud.openLevel(startLevel);
 const input: Input = new Input(canvas, cam, game, {
   gesture,
   toggleMute: () => {
@@ -138,5 +160,10 @@ installDebugApi({
   draw: () => renderer.draw(),
   setManual: (on) => {
     manual = on;
+  },
+  openLevel: (id) => {
+    const def = levelById(id);
+    if (def) hud.openLevel(def);
+    return !!def;
   },
 });

@@ -281,6 +281,21 @@ export class Sfx {
     }
   }
 
+  /** A table hitting the floor, and the balls clattering after it. */
+  crash(): void {
+    this.hiss(0.8, 0.5, 'lowpass', 2600, 0.8, 0, 110);
+    this.tone('sine', 120, 0.55, 0.42, { f1: 36 });
+    this.tone('square', 74, 0.22, 0.1, { lp: 420 });
+    for (let i = 0; i < 6; i++)
+      this.hiss(0.07, 0.22, 'bandpass', 1300 + ((i * 577) % 1400), 5, 0.12 + i * 0.09);
+  }
+
+  /** One star landing on the win card (higher for each). */
+  star(i: number): void {
+    this.tone('triangle', 660 * (1 + 0.26 * i), 0.3, 0.16, { f1: 1320 * (1 + 0.26 * i) });
+    this.tone('sine', 1980 * (1 + 0.26 * i), 0.2, 0.06, { delay: 0.05 });
+  }
+
   fanfare(): void {
     const arp = [523.25, 659.25, 783.99, 1046.5];
     arp.forEach((f, i) => this.tone('square', f, 0.14, 0.09, { delay: i * 0.1, lp: 3200 }));

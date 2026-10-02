@@ -79,3 +79,17 @@ export function logPot(log: TurnLog, b: Ball, pocketVid: number, t: number): voi
   log.pots.push({ ball: b.num, pocket: pocketVid, t, gen: b.gen, banks: b.banks, via: b.via, warps: b.warps });
   if (b.kind === 'cue') log.scratch = { pocket: pocketVid };
 }
+
+/** A deep copy of a log (records keep their own). */
+export function cloneLog(log: TurnLog): TurnLog {
+  return {
+    ...log,
+    pots: log.pots.map((p) => ({ ...p })),
+    scratch: log.scratch ? { ...log.scratch } : null,
+    cracked: [...log.cracked],
+    broken: [...log.broken],
+    exploded: [...log.exploded],
+    glassHp: { ...log.glassHp },
+    cueRest: log.cueRest ? { ...log.cueRest } : null,
+  };
+}

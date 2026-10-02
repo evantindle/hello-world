@@ -46,6 +46,12 @@ export class Fx {
   releasePull = 0;
   /** The bottom of the screen as a world direction; set from the camera every frame. */
   down = { x: 0, y: 1 };
+  /** A lost level: seconds since the table flip began, and the balls it threw (world units,
+   * falling down the screen; `s` is their size as they tumble toward you). */
+  flip: {
+    t: number;
+    balls: { id: number; x: number; y: number; vx: number; vy: number; s: number }[];
+  } | null = null;
   /** Seconds left to show the power ring / English marker after the player touched them. */
   dialShow = 0;
   englishShow = 0;
@@ -70,10 +76,45 @@ export class Fx {
     this.vignette = 0;
     this.vignetteTarget = 0;
     this.flash = 0;
+    this.flip = null;
+  }
+
+  /** Flips the table: every ball on it is thrown up the screen, to fall back down past it. */
+  startFlip(game: Game): void {
+    const d = this.down;
+    const r = this.rand;
+    this.flip = {
+      t: 0,
+      balls: game.balls
+        .filter((b) => b.active)
+        .map((b) => {
+          const up = 700 + r() * 600;
+          const side = (r() * 2 - 1) * 420;
+          return {
+            id: b.id,
+            x: b.x,
+            y: b.y,
+            vx: -d.x * up - d.y * side,
+            vy: -d.y * up + d.x * side,
+            s: 1,
+          };
+        }),
+    };
   }
 
   update(dtReal: number, game: Game, look: { x: number; y: number } | null): void {
     const dt = dtReal * game.timeScale;
+    if (this.flip) {
+      this.flip.t += dtReal;
+      const g = 2600 * dtReal;
+      for (const b of this.flip.balls) {
+        b.vx += this.down.x * g;
+        b.vy += this.down.y * g;
+        b.x += b.vx * dtReal;
+        b.y += b.vy * dtReal;
+        b.s = Math.min(1.8, b.s + 0.5 * dtReal);
+      }
+    }
     this.time += dt;
     this.jelly.sync(game.table);
     this.jelly.update(dt);

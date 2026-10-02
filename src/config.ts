@@ -220,3 +220,14 @@ export const BALL_COLORS = [
   '#ffc93c', // 9 yellow stripe
   '#3a86ff', // 10 blue stripe
 ];
+
+/** Oddball balls wear their own colours (normal balls and the ghost keep their number's). */
+export const VARIANT_COLORS: Partial<
+  Record<'normal' | 'bowling' | 'egg' | 'bomb' | 'chicken' | 'ghost' | 'golden', string>
+> = {
+  bowling: '#2e3150',
+  egg: '#fff3dc',
+  bomb: '#26283d',
+  chicken: '#fffdf5',
+  golden: '#ffcc33',
+};

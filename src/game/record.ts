@@ -2,6 +2,8 @@ import { H } from '../config';
 import { buildGeom, cloneTable } from '../geom/table';
 import type { ShotQ } from '../physics/launch';
 import type { TurnLog } from '../physics/log';
+
+export { cloneLog } from '../physics/log';
 import { stepWorld, type PhysEvent } from '../physics/world';
 import { startShot } from './preview';
 import { hashBoard, type GameState } from './serialize';
@@ -41,19 +43,6 @@ export interface TurnRecord {
   log: TurnLog;
   /** hashBoard() of the table and balls when the shot came to rest. */
   postHash: number;
-}
-
-export function cloneLog(log: TurnLog): TurnLog {
-  return {
-    ...log,
-    pots: log.pots.map((p) => ({ ...p })),
-    scratch: log.scratch ? { ...log.scratch } : null,
-    cracked: [...log.cracked],
-    broken: [...log.broken],
-    exploded: [...log.exploded],
-    glassHp: { ...log.glassHp },
-    cueRest: log.cueRest ? { ...log.cueRest } : null,
-  };
 }
 
 /**
