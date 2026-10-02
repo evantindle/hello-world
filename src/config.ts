@@ -67,6 +67,9 @@ export const BUDGET = 600;
 export const RESHAPE_STEP = R / 2;
 
 // ---------------------------------------------------------------- physics
+/** Bumped whenever a physics change makes old recordings (shared shots, level solutions) play out
+ * differently. */
+export const PHYSICS_VERSION = 1;
 export const H = 1 / 120; // fixed step
 export const MAX_MOVE = R / 2; // max travel per substep (no tunnelling)
 export const MAX_SUBSTEPS = 8;

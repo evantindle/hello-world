@@ -281,6 +281,13 @@ export class Sfx {
     }
   }
 
+  /** A tape winding back. */
+  rewind(): void {
+    this.slide('square', 300, 1400, 0.28, 0.05, 2400);
+    this.slide('square', 420, 1800, 0.22, 0.04, 2400, 0.1);
+    this.hiss(0.35, 0.12, 'bandpass', 2600, 2);
+  }
+
   /** A table hitting the floor, and the balls clattering after it. */
   crash(): void {
     this.hiss(0.8, 0.5, 'lowpass', 2600, 0.8, 0, 110);

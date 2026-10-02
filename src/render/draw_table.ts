@@ -374,7 +374,7 @@ function drawPillow(ctx: CanvasRenderingContext2D, x: number, y: number, r: numb
 function drawJaws(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, p: Pocket, game: Game, fx: Fx) {
   const tr = p.trait;
   if (tr?.kind !== 'chomper') return;
-  const t = game.phase === 'sim' ? game.world.t : game.phase === 'plan' ? fx.time : 0;
+  const t = game.simulating ? game.world.t : game.phase === 'plan' ? fx.time : 0;
   const u = ((t + tr.phase) % tr.period) / tr.period;
   const open = u < tr.open;
   // Openness with snappy edges.

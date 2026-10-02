@@ -11,7 +11,7 @@ import type { Camera } from './camera';
  */
 
 function glassHp(game: Game, p: Part & { kind: 'glass' }): number {
-  return game.phase === 'sim' ? (game.world.solid.glassHp.get(p.id) ?? p.hp) : p.hp;
+  return game.simulating ? (game.world.solid.glassHp.get(p.id) ?? p.hp) : p.hp;
 }
 
 /** The toy's outline as a path (exported for selection glows). */

@@ -45,7 +45,8 @@ function stickPose(game: Game, fx: Fx): StickPose | null {
       const u = Math.min(1, (k - STRIKE_HOLD) / STRIKE_LUNGE);
       return { pull: fx.releasePull + 6 + (-8 - fx.releasePull - 6) * u, bend: 0, alpha: 1 };
     }
-    case 'sim': {
+    case 'sim':
+    case 'replay': {
       const k = game.phaseT / 0.55;
       if (k >= 1) return null;
       return { pull: -8 + 220 * cubicOut(k), bend: 0, alpha: 1 - k };

@@ -110,7 +110,7 @@ export class Director {
       fx.jelly.wobbleAll(r, 260);
     });
 
-    ev.on('phase', ({ to }) => {
+    ev.on('phase', ({ from, to }) => {
       if (
         to === 'spin' &&
         game.shots === 0 &&
@@ -129,15 +129,23 @@ export class Director {
         this.cam.zoomTarget = 1.1;
         this.cam.focusTargetX = TABLE_W / 2 + (c.x - TABLE_W / 2) * 0.35;
         this.cam.focusTargetY = TABLE_H / 2 + (c.y - TABLE_H / 2) * 0.35;
+      } else if (to === 'plan' && from === 'replay') {
+        // Back from watching a replay: carry on quietly.
+        this.resetCamera();
       } else if (to === 'plan') {
         this.resetCamera();
         this.maxPopped = false;
         hud.showBanner('BEND IT!', 'bend');
-      } else if (to === 'sim') {
+      } else if (to === 'sim' || to === 'replay') {
         this.blammed = false;
         this.hits = [];
         this.cueWasBraking = false;
         this.bawked = false;
+        if (to === 'replay') {
+          // A replay shows the table, even after a lost level flipped it.
+          fx.flip = null;
+          if (from !== 'replay') hud.showBanner('REPLAY!', 'spin');
+        }
       } else if (to === 'over') {
         this.resetCamera();
         const info = game.lastOver;
@@ -201,6 +209,18 @@ export class Director {
         this.lastDialTick = this.now;
         sfx.tick(6 + value * 26);
       }
+    });
+
+    ev.on('rewind', () => {
+      sfx.rewind();
+      fx.jelly.wobbleAll(r, 160);
+      hud.toast('REWOUND!', 'meh');
+    });
+
+    ev.on('cleared', ({ count }) => {
+      sfx.thunk();
+      fx.jelly.wobbleAll(r, 120);
+      hud.toast(count === 1 ? 'PACKED AWAY!' : 'ALL PACKED AWAY!', 'meh');
     });
 
     ev.on('english', ({ x, y }) => {
@@ -796,8 +816,8 @@ export class Director {
         this.sfx.ding(5);
       }
     }
-    if (g.phase === 'sim' && this.eng.on) this.watchEnglish(dtReal);
-    if (g.phase === 'sim' && !this.bawked) {
+    if (g.simulating && this.eng.on) this.watchEnglish(dtReal);
+    if (g.simulating && !this.bawked) {
       // The chicken panics the moment it starts running.
       const chick = g.balls.find((b, i) => b.variant === 'chicken' && b.active && g.world.running[i]);
       if (chick) {
@@ -807,7 +827,7 @@ export class Director {
         fx.particles.feathers(chick.x, chick.y, r);
       }
     }
-    if (g.phase === 'sim') {
+    if (g.simulating) {
       const cue = g.cue;
       if (cue.active && cue.braking && !this.cueWasBraking) {
         this.cueWasBraking = true;

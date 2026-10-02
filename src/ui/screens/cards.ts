@@ -47,7 +47,7 @@ export function introCard(
 export function winCard(
   def: LevelDef,
   info: GameOverInfo,
-  hooks: { next: (() => void) | null; replay: () => void; levels: () => void },
+  hooks: { next: (() => void) | null; again: () => void; levels: () => void; watch: () => void },
 ): HTMLElement {
   const card = el('div', 'over-card win-card');
   const stars = [0, 1, 2]
@@ -75,10 +75,10 @@ export function winCard(
   const row = el('div', 'card-btns');
   row.append(
     button('btn back', 'LEVELS', 'Levels', hooks.levels),
-    button('btn back', 'REPLAY', 'Replay', hooks.replay),
+    button('btn back', 'AGAIN', 'Play again', hooks.again),
   );
   if (hooks.next) row.append(button('btn big play', 'NEXT ▶', 'Next level', hooks.next));
-  card.append(row);
+  card.append(row, watchButton(hooks.watch));
   return card;
 }
 
@@ -86,7 +86,7 @@ export function winCard(
 export function failCard(
   def: LevelDef,
   info: GameOverInfo,
-  hooks: { retry: () => void; levels: () => void },
+  hooks: { retry: () => void; levels: () => void; watch: () => void },
 ): HTMLElement {
   const card = el('div', 'over-card fail-card');
   card.innerHTML = `
@@ -99,6 +99,11 @@ export function failCard(
     button('btn back', 'LEVELS', 'Levels', hooks.levels),
     button('btn big play', 'TRY AGAIN', 'Try again', hooks.retry),
   );
-  card.append(row);
+  card.append(row, watchButton(hooks.watch));
   return card;
+}
+
+/** Under an end card: watch the last shot again. */
+export function watchButton(watch: () => void): HTMLButtonElement {
+  return button('watch-link', '▶ watch that shot again', 'Watch that shot again', watch);
 }

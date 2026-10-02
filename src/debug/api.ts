@@ -16,6 +16,10 @@ export interface DebugDeps {
   setManual: (on: boolean) => void;
   /** Opens a Classic level's intro card (false if there is no such level). */
   openLevel?: (id: string) => boolean;
+  /** A link to the last shot (null if there is none). */
+  shareLink?: () => Promise<string | null>;
+  /** Starts a Toy Box game. */
+  toyBox?: () => void;
 }
 
 /**
@@ -142,6 +146,29 @@ export function installDebugApi(d: DebugDeps): void {
       game.setDial(s.dial / 1000);
       if (game.rules.english) game.setEnglish(s.ex, s.ey);
       return game.shoot();
+    },
+    /** Watch the last shot again (time still has to pass). */
+    replay() {
+      return game.replay();
+    },
+    stopReplay() {
+      game.stopReplay();
+    },
+    rewind() {
+      return game.rewind();
+    },
+    respin() {
+      return game.respin();
+    },
+    clearToys() {
+      return game.clearToys();
+    },
+    toyBox() {
+      d.toyBox?.();
+    },
+    /** A link to the last shot (a promise). */
+    shareLink() {
+      return d.shareLink?.() ?? Promise.resolve(null);
     },
     /** After winning a level: the strokes played, as a solution file (tests/levels/solutions). */
     dumpSolution() {

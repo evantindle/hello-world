@@ -98,3 +98,12 @@ export const TOYBOX_RULES: Readonly<Ruleset> = {
   respin: true,
   par: null,
 };
+
+/** The shared-shot viewer: one recorded shot, watched over and over (nothing to play). */
+export const VIEWER_RULES: Readonly<Ruleset> = {
+  ...TOYBOX_RULES,
+  mode: 'viewer',
+  preview: 'guide',
+  rewind: false,
+  respin: false,
+};

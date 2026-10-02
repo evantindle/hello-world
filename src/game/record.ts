@@ -24,7 +24,9 @@ export type Edit =
   | { op: 'turn'; id: number; ks: number[] }
   | { op: 'undo' }
   | { op: 'redo' }
-  | { op: 'reset' };
+  | { op: 'reset' }
+  /** Toy Box: every toy back in the box. */
+  | { op: 'clear' };
 
 /**
  * One stroke, recorded: the board before it, the exact shot, what happened, and a fingerprint of

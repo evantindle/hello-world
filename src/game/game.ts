@@ -55,12 +55,31 @@ import { beats, styleOf } from './scoring';
 import { judge, starsFor, type Verdict } from './goals';
 import { loadProgress, recordWin } from './progress';
 import { cloneLog, type Edit, type TurnRecord } from './record';
-import { V1_RULES, type Ruleset } from './ruleset';
-import { hashBoard, snapState } from './serialize';
+import { V1_RULES, VIEWER_RULES, type Ruleset } from './ruleset';
+import { hashBoard, restoreState, snapState, type GameState } from './serialize';
 import { quantizeShot, type ShotQ } from './shot';
 import { Spin } from './spin';
 
-export type Phase = 'title' | 'spin' | 'plan' | 'strike' | 'sim' | 'resolve' | 'respawn' | 'over';
+export type Phase =
+  | 'title'
+  | 'spin'
+  | 'plan'
+  | 'strike'
+  | 'sim'
+  | 'resolve'
+  | 'respawn'
+  | 'over'
+  /** A recorded shot playing again on the table as it was (then the game carries on). */
+  | 'replay';
+
+/** What a replay needs: the board before the shot, the shot, and where everything ended up. */
+export interface ReplaySource {
+  pre: TurnRecord['pre'];
+  stroke: number;
+  aim: number;
+  shot: ShotQ;
+  postHash: number;
+}
 
 export interface TurnResult {
   potted: Ball[];
@@ -140,6 +159,12 @@ export interface GameEvents {
   uncorked: { vid: number; x: number; y: number };
   slowmo: { on: boolean };
   gameOver: GameOverInfo;
+  /** A replay started, or finished (`ok`: it came to rest exactly as recorded). */
+  replay: { on: boolean; ok: boolean | null };
+  /** Toy Box: the last shot was taken back. */
+  rewind: Record<string, never>;
+  /** Toy Box: every toy went back in the box. */
+  cleared: { count: number };
 }
 
 /** A toy being dragged or turned. */
@@ -244,6 +269,21 @@ export class Game implements ReshapeHost {
   bestStyle = 0;
   /** The table's name (remixes and levels), or null. */
   tableName: string | null = null;
+  /** The live game set aside while a shot replays; null when nothing is replaying. */
+  private replaying: {
+    back: GameState;
+    phase: Phase;
+    aim: number;
+    world: World;
+    src: ReplaySource;
+    loop: boolean;
+    /** Seconds the finished replay has been held on screen. */
+    hold: number;
+  } | null = null;
+  /** The last replay came to rest exactly where the recording did (null before any). */
+  replayOk: boolean | null = null;
+  /** Toy Box re-spins this stroke (each gets its own angle). */
+  private respins = 0;
   /** Classic: every object ball potted so far, in order, and how the level ended. */
   pottedOrder: number[] = [];
   private verdict: Verdict | null = null;
@@ -411,6 +451,9 @@ export class Game implements ReshapeHost {
     this.style = 0;
     this.pottedOrder = [];
     this.verdict = null;
+    this.replaying = null;
+    this.replayOk = null;
+    this.respins = 0;
     this.potted = [];
     this.scratched = false;
     this.respawn = null;
@@ -543,7 +586,7 @@ export class Game implements ReshapeHost {
 
   /** Advance by one frame of real time. */
   update(dtReal: number): void {
-    const fast = this.ff && this.phase === 'sim';
+    const fast = this.ff && this.simulating;
     const target = this.slowmo ? SLOWMO_SCALE : fast ? FF_SCALE : 1;
     this.timeScale = damp(this.timeScale, target, this.slowmo || fast ? 16 : 6, dtReal);
     if (Math.abs(this.timeScale - target) < 0.003) this.timeScale = target;
@@ -581,6 +624,10 @@ export class Game implements ReshapeHost {
       case 'sim':
         this.phaseT += dt;
         this.updateSim(dt, dtReal);
+        break;
+      case 'replay':
+        this.phaseT += dt;
+        this.updateReplay(dt, dtReal);
         break;
       case 'resolve':
         this.phaseT += dtReal;
@@ -804,13 +851,15 @@ export class Game implements ReshapeHost {
       left: this.objectsLeft,
     });
     if (this.verdict) this.enter('over');
-    else if (this.scratched && (this.rules.mode === 'classic' || this.objectsLeft > 0)) this.enter('respawn');
+    else if (this.scratched && (this.rules.mode !== 'free' || this.objectsLeft > 0)) this.enter('respawn');
     else this.nextTurn();
   }
 
   private nextTurn(): void {
     // Free Play ends when the table is clear; a Classic level ends when the judge says so.
+    // The Toy Box never ends.
     if (this.rules.mode === 'classic') this.enter(this.verdict ? 'over' : 'spin');
+    else if (this.rules.mode === 'toybox') this.enter('spin');
     else this.enter(this.objectsLeft === 0 ? 'over' : 'spin');
   }
 
@@ -829,10 +878,177 @@ export class Game implements ReshapeHost {
 
   /** Back to the menus (the home screen), dropping whatever was going on. */
   quit(): void {
+    this.stopReplay();
     this.endEdits();
     if (this.charging) this.cancelShot();
     if (this.slowmo) this.setSlowmo(false);
     this.enter('title');
+  }
+
+  // ------------------------------------------------------------------ replays
+
+  /** The sim is running: a real shot, or a replay of one. */
+  get simulating(): boolean {
+    return this.phase === 'sim' || this.phase === 'replay';
+  }
+
+  /** The last shot can be watched again now. */
+  get canReplay(): boolean {
+    return (this.phase === 'plan' || this.phase === 'over') && !this.charging && this.history.length > 0;
+  }
+
+  /**
+   * Plays a recorded shot again on the table as it was before it (the last shot, by default), with
+   * all its sound and fury; afterwards the game is put back exactly as it was. `loop` plays it over
+   * and over (the shared-shot viewer).
+   */
+  replay(src: ReplaySource | undefined = this.history[this.history.length - 1], loop = false): boolean {
+    if (!src || this.phase === 'replay' || this.charging) return false;
+    if (!loop && !this.canReplay) return false;
+    this.endEdits();
+    this.replaying = {
+      back: snapState(this),
+      phase: this.phase,
+      aim: this.aim,
+      world: this.world,
+      src,
+      loop,
+      hold: 0,
+    };
+    this.events.emit('replay', { on: true, ok: null });
+    this.startReplay();
+    return true;
+  }
+
+  private startReplay(): void {
+    const r = this.replaying!;
+    restoreState(this, r.src.pre);
+    this.aim = r.src.aim;
+    this.shot = r.src.shot;
+    r.hold = 0;
+    const { world, dx, dy, speed } = startShot(
+      this.balls,
+      this.geom,
+      r.src.pre.seed,
+      r.src.stroke,
+      r.src.shot,
+    );
+    this.world = world;
+    this.acc = 0;
+    this.enter('replay');
+    const cue = this.cue;
+    this.events.emit('strike', { power: r.src.shot.p / 1000, x: cue.x, y: cue.y, dx, dy, speed });
+  }
+
+  private updateReplay(dt: number, dtReal: number): void {
+    const r = this.replaying;
+    if (!r) return;
+    if (this.world.stopped) {
+      // Hold the last frame a moment, then go round again or put the game back.
+      r.hold += dtReal;
+      if (r.hold >= (r.loop ? 1.6 : 0.9)) {
+        if (r.loop) this.startReplay();
+        else this.stopReplay();
+      }
+      return;
+    }
+    this.acc += dt;
+    for (let steps = 0; this.acc >= H && steps < 48; steps++) {
+      this.evs.length = 0;
+      stepWorld(this.world, H, this.evs);
+      for (const e of this.evs) this.events.emit('phys', e);
+      this.acc -= H;
+      if (this.world.stopped) {
+        this.replayOk = hashBoard(this.table, this.balls) === r.src.postHash;
+        this.events.emit('replay', { on: true, ok: this.replayOk });
+        return;
+      }
+    }
+  }
+
+  /** Ends a replay (early, or once it has played): the game is back exactly where it was. */
+  stopReplay(): void {
+    const r = this.replaying;
+    if (!r) return;
+    this.replaying = null;
+    restoreState(this, r.back);
+    this.aim = r.aim;
+    this.world = r.world;
+    this.acc = 0;
+    const from = this.phase;
+    this.phase = r.phase;
+    // Past any intro animations of the phase it returns to.
+    this.phaseT = 10;
+    this.events.emit('phase', { from, to: r.phase });
+    this.events.emit('replay', { on: false, ok: this.replayOk });
+  }
+
+  /** The shared-shot viewer: a table seen through one recorded shot, over and over. */
+  watch(src: ReplaySource, name?: string): void {
+    this.setup({ rules: VIEWER_RULES, seed: src.pre.seed, table: src.pre.table, balls: src.pre.balls, name });
+    this.enter('title');
+    this.replay(src, true);
+  }
+
+  // ------------------------------------------------------------------ Toy Box
+
+  get canRewind(): boolean {
+    return this.rules.rewind && this.canReshape && this.history.length > 0;
+  }
+
+  /** Toy Box: take the last shot back: the board as it was just before it, same aim, same dial. */
+  rewind(): boolean {
+    if (!this.canRewind) return false;
+    this.endEdits();
+    const rec = this.history.pop()!;
+    restoreState(this, rec.pre);
+    this.shots = rec.stroke - 1;
+    this.aim = rec.aim;
+    this.spinTarget = rec.aim;
+    this.setDial(rec.shot.p / 1000);
+    if (this.rules.english) this.setEnglish(rec.shot.ex / 100, rec.shot.ey / 100);
+    this.world = createWorld(this.balls, this.geom);
+    this.fresh.clear();
+    this.edits = [];
+    this.editHistory.clear();
+    this.editHistory.begin(this.snapEdit());
+    this.dirty = false;
+    this.events.emit('rewind', {});
+    return true;
+  }
+
+  get canRespin(): boolean {
+    return this.rules.respin && this.canReshape;
+  }
+
+  /** Toy Box: spin the cue again, free (no stroke counted; the table stays as it is). */
+  respin(): boolean {
+    if (!this.canRespin) return false;
+    this.endEdits();
+    this.respins++;
+    this.forcedAngle = rngFor(this.seed, 'respin', this.shots, this.respins).range(0, TAU);
+    this.enter('spin');
+    return true;
+  }
+
+  /** Toy Box: every toy on the table goes back in the box (one undoable edit). */
+  clearToys(): boolean {
+    if (!this.canReshape || this.rules.mode !== 'toybox') return false;
+    this.endEdits();
+    const before = this.snapEdit();
+    let count = 0;
+    for (const p of [...this.table.parts]) {
+      if (p.placed === undefined || p.locked || !this.table.parts.includes(p)) continue;
+      const item = this.tray[p.placed];
+      if (!item) continue;
+      for (const id of removeParts(this, p.id)) this.fresh.delete(id);
+      item.count++;
+      count++;
+    }
+    if (count === 0) return false;
+    this.commitEdit(before, { op: 'clear' });
+    this.events.emit('cleared', { count });
+    return true;
   }
 
   private finish(): void {
@@ -1079,6 +1295,8 @@ export class Game implements ReshapeHost {
         return this.redo();
       case 'reset':
         return this.reset();
+      case 'clear':
+        return this.clearToys();
     }
   }
 

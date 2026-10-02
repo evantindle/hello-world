@@ -146,6 +146,11 @@ export class Input {
       g.skipSpin();
       return;
     }
+    // A tap ends a replay (the shared-shot viewer just keeps playing).
+    if (g.phase === 'replay' && g.rules.mode !== 'viewer') {
+      g.stopReplay();
+      return;
+    }
     if (g.phase !== 'plan' || g.charging) return;
     const r = this.hitRadius(e.pointerType !== 'mouse');
     const ph = g.hitPart(p.x, p.y, r, this.knobs());
@@ -304,6 +309,7 @@ export class Input {
       if (g.phase === 'title') g.start();
       else if (g.phase === 'over' && g.phaseT > 1.5) g.restart();
       else if (g.phase === 'spin') g.skipSpin();
+      else if (g.phase === 'replay' && g.rules.mode !== 'viewer') g.stopReplay();
       else if (g.phase === 'plan') g.shoot();
     } else if (e.code === 'Escape') {
       g.cancelShot();

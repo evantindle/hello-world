@@ -8,8 +8,16 @@ import { Autopilot } from './game/demo';
 import { Game, type GameSetup } from './game/game';
 import { levelById } from './game/levels/rec-room';
 import { setupFromLevel } from './game/levels/setup';
-import { FREE_RULES } from './game/ruleset';
-import { fullTray } from './game/toys';
+import { FREE_RULES, TOYBOX_RULES } from './game/ruleset';
+import {
+  codeFromHash,
+  decodeShot,
+  encodeShot,
+  replaySourceOf,
+  sharedFromRecord,
+  shareUrl,
+} from './game/share';
+import { forToyBox, fullTray, toyBoxTray } from './game/toys';
 import { loadBest } from './game/rules';
 import { Input } from './input/input';
 import { Camera } from './render/camera';
@@ -56,6 +64,16 @@ const freeSetup = (): GameSetup => ({
   remix,
   remixLevel: loadBest() === null ? 0 : undefined,
 });
+const toyBoxSetup = (): GameSetup => ({
+  rules: TOYBOX_RULES,
+  seed: randomSeed(),
+  tray: toyBoxTray(),
+  name: 'TOY BOX',
+});
+// A shared shot's link stays in the address bar only while it is being watched.
+const forgetLink = () => {
+  if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+};
 const hud = new Hud(hudRoot, game, {
   freePlay: () => {
     // The game dealt at boot waits on the title screen; after that, every Free Play is a new deal.
@@ -69,6 +87,20 @@ const hud = new Hud(hudRoot, game, {
   quit: () => game.quit(),
   screenTurn: () => (cam.rotated ? Math.PI / 2 : 0),
   dev: params.get('dev') === '1',
+  toyBox: () => game.load(toyBoxSetup()),
+  watch: (s) => game.watch(replaySourceOf(s), s.name ?? undefined),
+  playShared: (s) => {
+    forgetLink();
+    const table = { ...s.pre.table, parts: forToyBox(s.pre.table.parts) };
+    game.load({ ...toyBoxSetup(), table, balls: s.pre.balls, name: s.name ?? 'TOY BOX' });
+  },
+  leaveViewer: forgetLink,
+  shareLink: async () => {
+    const rec = game.history[game.history.length - 1];
+    if (!rec) return null;
+    const code = await encodeShot(sharedFromRecord(rec, game.rules.mode, game.tableName));
+    return shareUrl(code, location);
+  },
   toggleMute,
   isMuted: () => sfx.muted,
   gesture,
@@ -83,6 +115,20 @@ const hud = new Hud(hudRoot, game, {
 // ?level=rr-03: straight to that level's intro card.
 const startLevel = levelById(params.get('level') ?? '');
 if (startLevel) hud.openLevel(startLevel);
+// #s=...: someone shared a shot.
+const openLink = async (): Promise<boolean> => {
+  const code = codeFromHash(location.hash);
+  if (!code) return false;
+  const shot = await decodeShot(code);
+  if (shot) hud.openViewer(shot);
+  else {
+    forgetLink();
+    hud.toast('THAT LINK IS BROKEN', 'bad');
+  }
+  return shot !== null;
+};
+void openLink();
+window.addEventListener('hashchange', () => void openLink());
 const input: Input = new Input(canvas, cam, game, {
   gesture,
   toggleMute: () => {
@@ -109,7 +155,8 @@ const resize = () => {
   const tall = window.innerHeight > window.innerWidth * 1.15;
   const bands = hud.bands();
   cam.padTop = tall ? bands.top + 4 : 0;
-  cam.padBottom = tall ? bands.bottom + 4 : 0;
+  // The viewer's panel gets room on any screen (there is nothing to do but watch).
+  cam.padBottom = tall || game.rules.mode === 'viewer' ? bands.bottom + 4 : 0;
   cam.padLeft = bands.left > 0 ? bands.left + 4 : 0;
   cam.padRight = 0;
   renderer.resize();
@@ -177,4 +224,10 @@ installDebugApi({
     if (def) hud.openLevel(def);
     return !!def;
   },
+  shareLink: async () => {
+    const rec = game.history[game.history.length - 1];
+    if (!rec) return null;
+    return shareUrl(await encodeShot(sharedFromRecord(rec, game.rules.mode, game.tableName)), location);
+  },
+  toyBox: () => game.load(toyBoxSetup()),
 });

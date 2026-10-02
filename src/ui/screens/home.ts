@@ -4,6 +4,7 @@ import { button, el, setShown, wobbleTitle } from '../dom';
 export interface HomeHooks {
   freePlay: () => void;
   classic: () => void;
+  toyBox: () => void;
 }
 
 /** The front door: the logo, how to play, and the two ways in (Free Play and Classic). */
@@ -36,7 +37,13 @@ export class HomeScreen {
       hooks.classic,
     );
     this.stars = classic.querySelector('.mode-stars')!;
-    modes.append(free, classic);
+    const toys = button(
+      'btn big mode toybox',
+      '<span class="mode-name">TOY BOX</span><span class="mode-sub">Every toy, no limits. Build silly tables, rewind shots, share them.</span>',
+      'Toy Box',
+      hooks.toyBox,
+    );
+    modes.append(free, classic, toys);
     card.append(modes);
     this.el.append(card);
   }

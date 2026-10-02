@@ -124,7 +124,8 @@ export class TrayWidget {
       const b = this.el.children[i] as HTMLButtonElement | undefined;
       if (!b) return;
       const n = b.querySelector('.tray-n')!;
-      const text = `×${t.count}`;
+      // The Toy Box never runs out.
+      const text = t.count >= 50 ? '∞' : `×${t.count}`;
       if (n.textContent !== text) n.textContent = text;
       b.disabled = t.count <= 0;
     });

@@ -1,3 +1,4 @@
+import type { Part } from '../geom/parts';
 import type { PartPreset, TrayItem } from './placement';
 
 /**
@@ -25,4 +26,34 @@ export const TOY_PRESETS: readonly PartPreset[] = [
 /** A tray with `count` of every toy. */
 export function fullTray(count = 1): TrayItem[] {
   return TOY_PRESETS.map((preset) => ({ preset: structuredClone(preset), count }));
+}
+
+/** The Toy Box: every toy, and plenty of each (shown as ∞). */
+export function toyBoxTray(): TrayItem[] {
+  return fullTray(99);
+}
+
+/** Which standard toy a part is (same kind, felt or pull), or -1. */
+export function presetIndexFor(p: Part): number {
+  return TOY_PRESETS.findIndex(
+    (q) =>
+      q.kind === p.kind &&
+      (q.kind !== 'felt' || (p.kind === 'felt' && q.felt === p.felt)) &&
+      (q.kind !== 'magnet' || (p.kind === 'magnet' && q.polarity === p.polarity)),
+  );
+}
+
+/**
+ * A table from somewhere else (a shared shot, a level), made ready for the Toy Box: every toy can
+ * be moved and turned, and goes back into the matching slot of the box.
+ */
+export function forToyBox(parts: readonly Part[]): Part[] {
+  return parts.map((p) => {
+    const c = structuredClone(p);
+    delete c.locked;
+    const k = presetIndexFor(c);
+    if (k >= 0) c.placed = k;
+    else delete c.placed;
+    return c;
+  });
 }
