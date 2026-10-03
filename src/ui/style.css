@@ -2100,6 +2100,12 @@ body {
   .rack {
     display: none;
   }
+  /* The edit buttons over the stretch meter or grab pips, so the shoot controls keep their room. */
+  .stretch {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
   .levels-title {
     font-size: 30px;
   }

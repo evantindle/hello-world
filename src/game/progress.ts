@@ -16,8 +16,12 @@ export interface Progress {
 const KEY = 'bendy-billiards.v2';
 
 let memory: Progress = { levels: {} };
+/** Storage is read once; after that every change goes through saveProgress (the HUD asks often). */
+let loaded = false;
 
 export function loadProgress(): Progress {
+  if (loaded) return memory;
+  loaded = true;
   try {
     if (typeof localStorage === 'undefined') return memory;
     const raw = localStorage.getItem(KEY);
@@ -51,6 +55,7 @@ export function recordWin(id: string, stars: number, strokes: number): LevelReco
 /** For tests: forget everything. */
 export function resetProgress(): void {
   memory = { levels: {} };
+  loaded = true;
   try {
     if (typeof localStorage !== 'undefined') localStorage.removeItem(KEY);
   } catch {

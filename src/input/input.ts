@@ -11,6 +11,8 @@ export interface InputHooks {
   /** First gesture: unlock audio. */
   gesture: () => void;
   toggleMute: () => void;
+  /** Escape: close whatever box is open; true if one was. */
+  closeBox?: () => boolean;
   /** Whether a screen point (client px) is over the tray: drop a toy there to put it back. */
   overTray?: (cx: number, cy: number) => boolean;
 }
@@ -312,7 +314,10 @@ export class Input {
       else if (g.phase === 'replay' && g.rules.mode !== 'viewer') g.stopReplay();
       else if (g.phase === 'plan') g.shoot();
     } else if (e.code === 'Escape') {
-      g.cancelShot();
+      // Back out of whatever is going on: a box, a replay, a windup.
+      if (this.hooks.closeBox?.()) return;
+      if (g.phase === 'replay' && g.rules.mode !== 'viewer') g.stopReplay();
+      else g.cancelShot();
     } else if (e.code === 'ArrowUp' || e.code === 'ArrowRight') {
       e.preventDefault();
       if (g.phase === 'plan' && !g.charging) g.nudgeDial(e.shiftKey ? 0.1 : 0.02);

@@ -394,6 +394,13 @@ export class Hud {
     }
   }
 
+  /** Closes the share box if it is open (Escape). */
+  closeBox(): boolean {
+    if (this.shareBox.classList.contains('hidden')) return false;
+    setShown(this.shareBox, false);
+    return true;
+  }
+
   private showShareBox(url: string): void {
     const card = el('div', 'over-card share-card');
     card.append(

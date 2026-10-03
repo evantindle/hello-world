@@ -72,17 +72,58 @@ export function tracePath(ctx: CanvasRenderingContext2D, vt: VisualTable): void 
 
 // ---------------------------------------------------------------- table body
 
+/** The felt's dot grid: rows DOT_SP apart sideways, staggered, DOT_ROW apart down. */
+const DOT_SP = 38;
+const DOT_ROW = DOT_SP * 0.866;
+const DOT_R = 2.8;
+
 let dots: P[] | null = null;
 function feltDots(): P[] {
   if (dots) return dots;
   const out: P[] = [];
-  const sp = 38;
   let row = 0;
-  for (let y = PLAY.minY; y <= PLAY.maxY; y += sp * 0.866, row++) {
-    for (let x = PLAY.minX + (row % 2 ? sp / 2 : 0); x <= PLAY.maxX; x += sp) out.push({ x, y });
+  for (let y = PLAY.minY; y <= PLAY.maxY; y += DOT_ROW, row++) {
+    for (let x = PLAY.minX + (row % 2 ? DOT_SP / 2 : 0); x <= PLAY.maxX; x += DOT_SP) out.push({ x, y });
   }
   dots = out;
   return out;
+}
+
+/**
+ * The same dots as one repeating pattern (two rows per tile), drawn at the screen's resolution:
+ * one fill instead of hundreds of arcs while the felt lies still.
+ */
+let dotTile: { pattern: CanvasPattern; scale: number } | null = null;
+function dotPattern(ctx: CanvasRenderingContext2D, scale: number): CanvasPattern | null {
+  if (dotTile && Math.abs(dotTile.scale - scale) / scale < 0.04) return dotTile.pattern;
+  const tw = Math.max(4, Math.round(DOT_SP * scale));
+  const th = Math.max(4, Math.round(2 * DOT_ROW * scale));
+  const tile = document.createElement('canvas');
+  tile.width = tw;
+  tile.height = th;
+  const t = tile.getContext('2d');
+  if (!t) return null;
+  t.scale(tw / DOT_SP, th / (2 * DOT_ROW));
+  t.beginPath();
+  // One dot at each corner (they straddle the edges) and one in the middle of the tile.
+  for (const [x, y] of [
+    [0, 0],
+    [DOT_SP, 0],
+    [0, 2 * DOT_ROW],
+    [DOT_SP, 2 * DOT_ROW],
+    [DOT_SP / 2, DOT_ROW],
+  ] as const) {
+    t.moveTo(x + DOT_R, y);
+    t.arc(x, y, DOT_R, 0, TAU);
+  }
+  t.fillStyle = COLORS.feltDot;
+  t.fill();
+  const pattern = ctx.createPattern(tile, 'repeat');
+  if (!pattern) return null;
+  // Tile pixels back to world units, lined up with the dot grid.
+  pattern.setTransform(new DOMMatrix([DOT_SP / tw, 0, 0, (2 * DOT_ROW) / th, PLAY.minX, PLAY.minY]));
+  dotTile = { pattern, scale };
+  return pattern;
 }
 
 export function drawTableBody(
@@ -144,7 +185,15 @@ export function drawTableBody(
   ctx.fillStyle = g;
   ctx.fill();
 
-  // Felt dots, warped by the jelly so the cloth visibly stretches.
+  // Felt dots, warped by the jelly so the cloth visibly stretches (a plain pattern while it is
+  // still).
+  const warp = fx.jelly.active;
+  const still = warp ? null : dotPattern(ctx, cam.scale * cam.dpr);
+  if (still) {
+    tracePath(ctx, vt);
+    ctx.fillStyle = still;
+    ctx.fill();
+  }
   ctx.save();
   tracePath(ctx, vt);
   ctx.clip();
@@ -153,7 +202,6 @@ export function drawTableBody(
   const ctlY: number[] = [];
   const offX: number[] = [];
   const offY: number[] = [];
-  const warp = fx.jelly.active;
   if (warp) {
     verts.forEach((v, i) => {
       const o = fx.jelly.offset(v.id);
@@ -170,8 +218,8 @@ export function drawTableBody(
     });
   }
   ctx.beginPath();
-  const rr = 2.8;
-  for (const d of feltDots()) {
+  const rr = DOT_R;
+  for (const d of still ? [] : feltDots()) {
     let x = d.x;
     let y = d.y;
     if (warp) {

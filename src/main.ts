@@ -29,8 +29,8 @@ const params = new URLSearchParams(location.search);
 const seedParam = params.get('seed');
 const seed = seedParam !== null && Number.isFinite(Number(seedParam)) ? Number(seedParam) : undefined;
 const demo = params.get('demo') === '1';
-// Until the remix and the Toy Box hand out toys: one of every toy in the tray, with ?toys=1 (or
-// in a playtest build, made with VITE_TOYS=1).
+// For testing: Free Play with one of every toy in the tray, with ?toys=1 (or in a build made with
+// VITE_TOYS=1). The remix and the Toy Box hand out toys on their own.
 const toys = params.get('toys') === '1' || (import.meta.env.VITE_TOYS === '1' && params.get('toys') !== '0');
 
 const canvas = document.getElementById('world') as HTMLCanvasElement;
@@ -48,6 +48,8 @@ const game = new Game({
   remixLevel: loadBest() === null ? 0 : undefined,
 });
 const cam = new Camera();
+// Players who ask for less motion get a gentler shake.
+if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) cam.shakeScale = 0.3;
 const fx = new Fx(createRng(seed ?? randomSeed()).next);
 const sfx = new Sfx();
 if (params.get('mute') === '1') sfx.muted = true;
@@ -136,6 +138,7 @@ const input: Input = new Input(canvas, cam, game, {
     hud.refreshMute();
   },
   overTray: (cx, cy) => hud.tray.contains(cx, cy),
+  closeBox: () => hud.closeBox(),
 });
 const renderer = new Renderer(canvas, game, fx, cam, () => input.view());
 game.events.on('dragStart', () => input.endTutorial());

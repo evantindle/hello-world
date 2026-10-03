@@ -69,8 +69,11 @@ export class Camera {
     return this.padLeft + (this.cssW - this.padLeft - this.padRight) / 2;
   }
 
+  /** Scales every shake (turned down for players who prefer reduced motion). */
+  shakeScale = 1;
+
   addShake(amount: number): void {
-    this.trauma = Math.min(1.2, this.trauma + amount);
+    this.trauma = Math.min(1.2, this.trauma + amount * this.shakeScale);
   }
 
   update(dt: number, rand: () => number): void {
