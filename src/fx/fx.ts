@@ -1,3 +1,4 @@
+import { TABLE_H, TABLE_W, VIEW_MARGIN } from '../config';
 import { damp } from '../core/easing';
 import type { Game } from '../game/game';
 import { PEGS } from '../game/spin';
@@ -24,6 +25,10 @@ export class Fx {
   readonly chomp = new Map<number, number>();
   /** Per pocket vertex id: animated hole radius. */
   readonly holeR = new Map<number, number>();
+  /** Per vertex id: seconds since a scratch bolted it (drives the wrench animation). */
+  readonly bolted = new Map<number, number>();
+  /** Per bumper part id: seconds of hit flash left. */
+  readonly bumps = new Map<number, number>();
   readonly pegFlick: number[] = new Array<number>(PEGS).fill(0);
   lastPeg = 0;
   /** Strike speed lines. */
@@ -39,6 +44,17 @@ export class Fx {
   hungerWobble = 0;
   /** The stick pull when the shot was released (used by the strike lunge). */
   releasePull = 0;
+  /** The bottom of the screen as a world direction; set from the camera every frame. */
+  down = { x: 0, y: 1 };
+  /** A lost level: seconds since the table flip began, and the balls it threw (world units,
+   * falling down the screen; `s` is their size as they tumble toward you). */
+  flip: {
+    t: number;
+    balls: { id: number; x: number; y: number; vx: number; vy: number; s: number }[];
+  } | null = null;
+  /** Seconds left to show the power ring / English marker after the player touched them. */
+  dialShow = 0;
+  englishShow = 0;
 
   constructor(readonly rand: () => number) {}
 
@@ -51,6 +67,8 @@ export class Fx {
     this.nope.clear();
     this.chomp.clear();
     this.holeR.clear();
+    this.bolted.clear();
+    this.bumps.clear();
     this.speedLines = null;
     this.confettiRain = 0;
     this.fireworks = 0;
@@ -58,21 +76,67 @@ export class Fx {
     this.vignette = 0;
     this.vignetteTarget = 0;
     this.flash = 0;
+    this.flip = null;
+  }
+
+  /** Flips the table: every ball on it is thrown up the screen, to fall back down past it. */
+  startFlip(game: Game): void {
+    const d = this.down;
+    const r = this.rand;
+    this.flip = {
+      t: 0,
+      balls: game.balls
+        .filter((b) => b.active)
+        .map((b) => {
+          const up = 700 + r() * 600;
+          const side = (r() * 2 - 1) * 420;
+          return {
+            id: b.id,
+            x: b.x,
+            y: b.y,
+            vx: -d.x * up - d.y * side,
+            vy: -d.y * up + d.x * side,
+            s: 1,
+          };
+        }),
+    };
   }
 
   update(dtReal: number, game: Game, look: { x: number; y: number } | null): void {
     const dt = dtReal * game.timeScale;
+    if (this.flip) {
+      this.flip.t += dtReal;
+      const g = 2600 * dtReal;
+      for (const b of this.flip.balls) {
+        b.vx += this.down.x * g;
+        b.vy += this.down.y * g;
+        b.x += b.vx * dtReal;
+        b.y += b.vy * dtReal;
+        b.s = Math.min(1.8, b.s + 0.5 * dtReal);
+      }
+    }
     this.time += dt;
     this.jelly.sync(game.table);
     this.jelly.update(dt);
+    this.particles.down = this.down;
     this.particles.update(dt);
     this.pops.update(dt);
     this.balls.update(dt, game.balls, this.rand, look);
     this.flash = Math.max(0, this.flash - dtReal * 5);
+    this.dialShow = Math.max(0, this.dialShow - dtReal);
+    this.englishShow = Math.max(0, this.englishShow - dtReal);
     this.vignette = damp(this.vignette, this.vignetteTarget, 6, dtReal);
     for (const [k, v] of this.nope) {
       if (v - dtReal <= 0) this.nope.delete(k);
       else this.nope.set(k, v - dtReal);
+    }
+    for (const [k, v] of this.bolted) {
+      if (v > 2) this.bolted.delete(k);
+      else this.bolted.set(k, v + dtReal);
+    }
+    for (const [k, v] of this.bumps) {
+      if (v - dt <= 0) this.bumps.delete(k);
+      else this.bumps.set(k, v - dt);
     }
     for (const [k, v] of this.chomp) {
       if (v - dt <= 0) this.chomp.delete(k);
@@ -92,17 +156,26 @@ export class Fx {
     while (this.ripples.length && this.ripples[0]!.t > 0.7) this.ripples.shift();
     this.hungerWobble += dt * (2 + game.hunger * 4);
 
-    // Game-over party.
+    // Game-over party: confetti rains from the top edge of the screen.
     if (this.confettiRain > 0) {
       this.confettiRain -= dtReal;
       const n = Math.random() < 0.9 ? 3 : 1;
+      const d = this.down;
+      // Screen-right in world axes, and the view's half extents along each screen axis.
+      const rx = d.y;
+      const ry = -d.x;
+      const halfW = (d.y !== 0 ? TABLE_W : TABLE_H) / 2 + VIEW_MARGIN;
+      const halfH = (d.y !== 0 ? TABLE_H : TABLE_W) / 2 + VIEW_MARGIN;
       for (let i = 0; i < n; i++) {
+        const across = (this.rand() - 0.5) * 2 * halfW;
+        const side = (this.rand() - 0.5) * 60;
+        const fall = 80 + this.rand() * 120;
         this.particles.spawn({
           kind: 'confetti',
-          x: -150 + this.rand() * 1300,
-          y: -200,
-          vx: (this.rand() - 0.5) * 60,
-          vy: 80 + this.rand() * 120,
+          x: TABLE_W / 2 + rx * across - d.x * (halfH + 50),
+          y: TABLE_H / 2 + ry * across - d.y * (halfH + 50),
+          vx: rx * side + d.x * fall,
+          vy: ry * side + d.y * fall,
           size: 8 + this.rand() * 7,
           rot: this.rand() * 6,
           vr: (this.rand() - 0.5) * 14,

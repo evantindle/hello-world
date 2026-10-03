@@ -12,8 +12,11 @@ interface Plan {
   toX: number;
   toY: number;
   dragDur: number;
-  chargeDur: number;
-  stage: 'think' | 'drag' | 'pause' | 'charge' | 'done';
+  /** Power to dial in before shooting. */
+  power: number;
+  /** Dial setting when the dial started turning. */
+  dialFrom: number;
+  stage: 'think' | 'drag' | 'pause' | 'done';
   t: number;
 }
 
@@ -116,7 +119,8 @@ export class Autopilot {
       toX: 0,
       toY: 0,
       dragDur: this.rng.range(0.9, 1.5),
-      chargeDur: this.rng.range(0.45, 1.3),
+      power: this.rng.range(0.35, 1),
+      dialFrom: this.game.dial,
       stage: 'think',
       t: 0,
     };
@@ -129,6 +133,7 @@ export class Autopilot {
       case 'think':
         if (p.t > 0.7) {
           p.t = 0;
+          p.dialFrom = g.dial;
           if (p.handle && g.beginDrag(p.handle, p.fromX, p.fromY)) p.stage = 'drag';
           else p.stage = 'pause';
         }
@@ -141,22 +146,21 @@ export class Autopilot {
         if (k >= 1) {
           g.endDrag();
           p.stage = 'pause';
+          p.dialFrom = g.dial;
           p.t = 0;
         }
         break;
       }
-      case 'pause':
-        if (p.t > 0.45) {
-          p.t = 0;
-          p.stage = g.beginCharge() ? 'charge' : 'done';
-        }
-        break;
-      case 'charge':
-        if (p.t >= p.chargeDur) {
-          g.releaseCharge();
+      case 'pause': {
+        // Turn the power dial to the chosen setting, then hit SHOOT.
+        const k = Math.min(1, p.t / 0.6);
+        g.setDial(p.dialFrom + (p.power - p.dialFrom) * sineInOut(k));
+        if (k >= 1 && p.t > 0.8) {
+          g.shoot();
           p.stage = 'done';
         }
         break;
+      }
       default:
         break;
     }

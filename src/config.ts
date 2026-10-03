@@ -44,6 +44,12 @@ export const MAX_HUNGER = 3;
 export const CUE_CAPTURE_R = 0.75 * CAPTURE_R;
 /** Below this interior angle a pocket mouth is narrower than a ball: it closes. */
 export const POCKET_OPEN_MIN_DEG = 56;
+/**
+ * Angle thresholds as the (cos, sin) of the matching turn angle PI - threshold, written out as
+ * literals so the comparisons need no trig (whose last bit varies by browser). A unit test keeps
+ * them in step with the degree values.
+ */
+export const POCKET_OPEN_TURN = { c: -0.5591929034707467, s: 0.8290375725550417 }; // 180 - 56
 
 // ---------------------------------------------------------------- reshaping
 export const MIN_EDGE = 5 * R;
@@ -52,6 +58,8 @@ export const MIN_AREA_FRAC = 0.4;
 export const MAX_VERTS = 12;
 export const MIN_ANGLE_DEG = 20;
 export const MAX_ANGLE_DEG = 340;
+export const MIN_ANGLE_TURN = { c: -0.9396926207859083, s: 0.3420201433256689 }; // 180 - 20
+export const MAX_ANGLE_TURN = { c: -0.9396926207859083, s: -0.3420201433256689 }; // 180 - 340
 /** Stretch budget per turn, in world units of vertex travel. */
 export const BUDGET = 600;
 /** Reshaping may not bring a ball inside an open hole's suction radius (no free pots). */
@@ -59,6 +67,9 @@ export const BUDGET = 600;
 export const RESHAPE_STEP = R / 2;
 
 // ---------------------------------------------------------------- physics
+/** Bumped whenever a physics change makes old recordings (shared shots, level solutions) play out
+ * differently. */
+export const PHYSICS_VERSION = 1;
 export const H = 1 / 120; // fixed step
 export const MAX_MOVE = R / 2; // max travel per substep (no tunnelling)
 export const MAX_SUBSTEPS = 8;
@@ -79,6 +90,81 @@ export const SIM_TIMEOUT = 25; // seconds of sim time before the ref calls it
 export const SETTLE_GRACE = 0.2;
 export const HIT_EVENT_MIN = 40;
 
+// ---------------------------------------------------------------- English (cue spin)
+/** Cloth friction while the cue ball skids (slip = contact velocity), u/s^2. */
+export const A_SLIDE = 2500;
+/** Below this slip the ball counts as rolling. */
+export const SLIP_EPS = 1;
+/** Draw/follow strength: banked spin = ey * K_ROLL * launch speed. */
+export const K_ROLL = 1.0;
+/** Banked draw/follow wears off over roughly this much travel. */
+export const SPIN_RANGE = 900;
+/** Sideways slip per unit of side English; 3.5 * tan(25deg), so a full curve bends exactly 25deg. */
+export const K_C = 1.632;
+/** Sidespin (cushion throw) per unit of side English. */
+export const K_SIDE = 1.0;
+/** Cushion throw per unit of sidespin... */
+export const K_THROW = 0.35;
+/** ...capped by cushion friction: at most MU_C (1 + e) |vn|. */
+export const MU_C = 0.25;
+/** Fraction of sidespin left after a cushion. */
+export const WZ_RAIL_KEEP = 0.5;
+/** Sidespin decay per second. */
+export const WZ_DECAY = 0.6;
+
+// ---------------------------------------------------------------- toys & oddball balls
+/** Bumpers send balls away this much faster than they arrived (and at least BUMPER_MIN)... */
+export const BUMPER_E = 1.25;
+export const BUMPER_MIN = 320;
+/** ...for their first few kicks each shot, so two bumpers cannot juggle a ball forever. */
+export const BUMPER_KICKS = 8;
+/** A hit harder than this (closing speed) cracks a glass pane or an egg. */
+export const GLASS_HIT = 450;
+export const EGG_CRACK = 700;
+/** Bomb blast: radius and push at the centre. */
+export const BLAST_R = 180;
+export const BLAST_V = 900;
+/** The chicken runs (on its legs: no rolling friction) from a moving cue ball within this range,
+ * this keenly, this fast at most. */
+export const CHICKEN_R = 200;
+export const CHICKEN_A = 3000;
+export const CHICKEN_VMAX = 900;
+
+// ---------------------------------------------------------------- floor toys
+/** Felt patches: multipliers on rolling friction and on drag. Sand eats fast balls (drag),
+ * mud eats slow ones (rolling friction), ice lets everything glide. */
+export const ICE_ROLL = 0.25;
+export const ICE_DRAG = 0.25;
+export const MUD_ROLL = 3.5;
+export const MUD_DRAG = 1;
+export const SAND_ROLL = 1.5;
+export const SAND_DRAG = 6;
+/** Default conveyor belt speed and fan push (u/s^2). */
+export const CONVEYOR_SPEED = 260;
+export const FAN_PUSH = 420;
+/** A belt grips balls this many times harder than felt (friction acts relative to the belt)... */
+export const BELT_GRIP = 3;
+/** ...and deadens their bounces off rails and toys, so a belt pins a ball instead of juggling it. */
+export const BELT_BOUNCE = 0.3;
+/** Magnets: inside this fraction of the radius the pull fades to nothing and damps the ball, so
+ * a caught ball settles on the magnet instead of orbiting it. */
+export const MAGNET_CORE = 0.25;
+export const CORE_DAMP = 6;
+/** Black hole: pull at the centre, how close a ball's centre must get to be swallowed, how long it
+ * stays gone, and how fast it comes back out. */
+export const BLACKHOLE_PULL = 1500;
+export const BLACKHOLE_CORE = 24;
+export const LIMBO_TIME = 0.6;
+export const BLACKHOLE_EXIT_V = 300;
+/** A ball leaving a portal cannot warp again until it is this far outside the exit disc. */
+export const PORTAL_SLACK = 1;
+/** Each speed pad kicks at most this many times a shot (a pad aimed at a rail cannot juggle). */
+export const BOOST_KICKS = 6;
+/** Stuck detector for tables with floor toys: if over one window every moving ball was pushed by a
+ * toy and stayed inside a box this small (a belt bouncing a ball off a rail), the shot is over. */
+export const STUCK_WINDOW = 1;
+export const STUCK_BOX = 3 * R;
+
 // ---------------------------------------------------------------- shot
 export const V_SHOT_MIN = 350;
 export const V_SHOT_MAX = 2300;
@@ -93,6 +179,8 @@ export const RESOLVE_DELAY = 0.55;
 export const RESPAWN_TIME = 1.25;
 export const SLOWMO_SCALE = 0.25;
 export const SLOWMO_MAX = 2.2; // real seconds of slow-mo per game at most per approach
+/** Holding fast-forward runs the sim this many times faster. */
+export const FF_SCALE = 3;
 export const PAR = 20;
 
 // ---------------------------------------------------------------- rack
@@ -135,3 +223,14 @@ export const BALL_COLORS = [
   '#ffc93c', // 9 yellow stripe
   '#3a86ff', // 10 blue stripe
 ];
+
+/** Oddball balls wear their own colours (normal balls and the ghost keep their number's). */
+export const VARIANT_COLORS: Partial<
+  Record<'normal' | 'bowling' | 'egg' | 'bomb' | 'chicken' | 'ghost' | 'golden', string>
+> = {
+  bowling: '#2e3150',
+  egg: '#fff3dc',
+  bomb: '#26283d',
+  chicken: '#fffdf5',
+  golden: '#ffcc33',
+};

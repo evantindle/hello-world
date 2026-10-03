@@ -1,6 +1,6 @@
-import { PLAY, R, RESHAPE_STEP } from '../config';
-import { clamp } from '../core/vec';
-import { closestOnSegment, distToSegment, pointInPolygon } from '../geom/polygon';
+import { PLAY, RESHAPE_STEP } from '../config';
+import { clamp, hyp } from '../core/vec';
+import { closestOnSegment } from '../geom/polygon';
 import {
   buildGeom,
   canSplitEdge,
@@ -9,11 +9,14 @@ import {
   validateTable,
   vertexIndex,
   withoutVertex,
-  type InvalidReason,
   type Table,
   type TableGeom,
 } from '../geom/table';
 import type { Ball } from '../physics/world';
+import { checkParts } from './placement';
+import { settlePositions, type BlockReason } from './settle';
+
+export { settlePositions, type BlockReason } from './settle';
 
 /** Anything the reshaper can edit: the game implements this. */
 export interface ReshapeHost {
@@ -32,9 +35,10 @@ export interface Handle {
   x: number;
   y: number;
   pocket: boolean;
+  /** A bolted knob: it shows (and complains when grabbed) but will not move. */
+  locked?: boolean;
 }
 
-export type BlockReason = InvalidReason | 'crushed' | 'keep-out' | 'squeezed-out' | 'budget' | 'pocket';
 
 export interface MoveResult {
   /** Distance the vertex actually travelled (and the budget it cost). */
@@ -44,15 +48,13 @@ export interface MoveResult {
   pushed: { id: number; dx: number; dy: number }[];
 }
 
-interface Pos {
-  x: number;
-  y: number;
-}
 
 export function listHandles(t: Table): Handle[] {
   const out: Handle[] = [];
   const n = t.verts.length;
-  t.verts.forEach((v, i) => out.push({ kind: 'vertex', index: i, x: v.x, y: v.y, pocket: v.pocket }));
+  t.verts.forEach((v, i) =>
+    out.push({ kind: 'vertex', index: i, x: v.x, y: v.y, pocket: v.pocket, locked: v.bolted === true }),
+  );
   for (let i = 0; i < n; i++) {
     if (!canSplitEdge(t, i)) continue;
     const a = t.verts[i]!;
@@ -67,96 +69,13 @@ export function hitHandle(t: Table, x: number, y: number, radius: number): Handl
   let best: Handle | null = null;
   let bd = Infinity;
   for (const h of listHandles(t)) {
-    const d = Math.hypot(h.x - x, h.y - y) * (h.kind === 'edge' ? 1.25 : 1);
+    const d = hyp(h.x - x, h.y - y) * (h.kind === 'edge' ? 1.25 : 1);
     if (d < radius && d < bd) {
       bd = d;
       best = h;
     }
   }
   return best;
-}
-
-/**
- * Position-only settle of balls against new geometry. Walls shove balls, balls shove balls.
- * Fails (and the caller rejects the step) if a ball would be crushed, squeezed out of the
- * table, or pushed inside an open hole's suction radius.
- */
-export function settlePositions(
-  pos: Pos[],
-  geom: TableGeom,
-  prev: readonly Pos[],
-  prevGeom: TableGeom,
-): { ok: boolean; reason?: BlockReason } {
-  const rails = geom.rails;
-  const n = pos.length;
-  const min = 2 * R;
-  for (let iter = 0; iter < 16; iter++) {
-    let moved = false;
-    for (const p of pos) {
-      for (const r of rails) {
-        const q = closestOnSegment(p.x, p.y, r.ax, r.ay, r.bx, r.by);
-        const ox = p.x - q.x;
-        const oy = p.y - q.y;
-        const d = Math.hypot(ox, oy);
-        if (d >= R - 1e-6) continue;
-        // Radial push, except when the centre is behind the rail within its span (it slipped
-        // through): then push straight back along the inward normal.
-        let nx = r.nx;
-        let ny = r.ny;
-        const behindSpan = ox * r.nx + oy * r.ny < 0 && q.t > 0 && q.t < 1;
-        if (d > 1e-6 && !behindSpan) {
-          nx = ox / d;
-          ny = oy / d;
-        }
-        p.x = q.x + nx * R;
-        p.y = q.y + ny * R;
-        moved = true;
-      }
-    }
-    for (let i = 0; i < n; i++) {
-      const a = pos[i]!;
-      for (let j = i + 1; j < n; j++) {
-        const b = pos[j]!;
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const d = Math.hypot(dx, dy);
-        if (d >= min - 1e-6) continue;
-        const nx = d > 1e-9 ? dx / d : 1;
-        const ny = d > 1e-9 ? dy / d : 0;
-        const half = (min - d) / 2 + 1e-4;
-        a.x -= nx * half;
-        a.y -= ny * half;
-        b.x += nx * half;
-        b.y += ny * half;
-        moved = true;
-      }
-    }
-    if (!moved) break;
-  }
-
-  for (const p of pos) if (!pointInPolygon(p.x, p.y, geom.poly)) return { ok: false, reason: 'squeezed-out' };
-  for (const p of pos) {
-    for (const r of rails) {
-      if (distToSegment(p.x, p.y, r.ax, r.ay, r.bx, r.by) < R - 0.5) return { ok: false, reason: 'crushed' };
-    }
-  }
-  for (let i = 0; i < n; i++) {
-    for (let j = i + 1; j < n; j++) {
-      if (Math.hypot(pos[j]!.x - pos[i]!.x, pos[j]!.y - pos[i]!.y) < min - 0.5)
-        return { ok: false, reason: 'crushed' };
-    }
-  }
-  for (const pk of geom.pockets) {
-    if (!pk.open) continue;
-    const before = prevGeom.pockets.find((q) => q.vid === pk.vid);
-    for (let i = 0; i < n; i++) {
-      const da = Math.hypot(pos[i]!.x - pk.x, pos[i]!.y - pk.y);
-      if (da >= pk.sr) continue;
-      const db = before && before.open ? Math.hypot(prev[i]!.x - before.x, prev[i]!.y - before.y) : Infinity;
-      if (da < db - 0.01) return { ok: false, reason: 'keep-out' };
-    }
-  }
-  return { ok: true };
 }
 
 /**
@@ -168,7 +87,7 @@ function sweepVertex(host: ReshapeHost, idx: number, tx: number, ty: number, val
   const v = host.table.verts[idx]!;
   const dx = tx - v.x;
   const dy = ty - v.y;
-  const L = Math.hypot(dx, dy);
+  const L = hyp(dx, dy);
   if (L < 1e-6) return res;
   const steps = Math.max(1, Math.ceil(L / RESHAPE_STEP));
   const fromX = v.x;
@@ -179,6 +98,8 @@ function sweepVertex(host: ReshapeHost, idx: number, tx: number, ty: number, val
   let prevGeom = host.geom;
   let goodX = fromX;
   let goodY = fromY;
+  // Rails may not run into toys (unless the toys were already out of place: then never mind).
+  const guardParts = host.table.parts.length > 0 && checkParts(host.table, host.geom, { pairs: false }).ok;
   for (let k = 1; k <= steps; k++) {
     v.x = fromX + (dx * k) / steps;
     v.y = fromY + (dy * k) / steps;
@@ -189,6 +110,10 @@ function sweepVertex(host: ReshapeHost, idx: number, tx: number, ty: number, val
         res.blocked = valid.reason ?? 'crossing';
         break;
       }
+    }
+    if (guardParts && !checkParts(host.table, geom, { pairs: false }).ok) {
+      res.blocked = 'part-in-the-way';
+      break;
     }
     const trial = cur.map((p) => ({ ...p }));
     const s = settlePositions(trial, geom, cur, prevGeom);
@@ -212,7 +137,7 @@ function sweepVertex(host: ReshapeHost, idx: number, tx: number, ty: number, val
     b.x = p.x;
     b.y = p.y;
   });
-  res.applied = Math.hypot(goodX - fromX, goodY - fromY);
+  res.applied = hyp(goodX - fromX, goodY - fromY);
   return res;
 }
 
@@ -221,11 +146,12 @@ export function moveVertex(host: ReshapeHost, vid: number, tx: number, ty: numbe
   const idx = vertexIndex(host.table, vid);
   if (idx < 0) return { applied: 0, blocked: null, pushed: [] };
   const v = host.table.verts[idx]!;
+  if (v.bolted) return { applied: 0, blocked: 'bolted', pushed: [] };
   tx = clamp(tx, PLAY.minX, PLAY.maxX);
   ty = clamp(ty, PLAY.minY, PLAY.maxY);
   let dx = tx - v.x;
   let dy = ty - v.y;
-  const L = Math.hypot(dx, dy);
+  const L = hyp(dx, dy);
   if (L < 1e-3) return { applied: 0, blocked: null, pushed: [] };
   let budgetClipped = false;
   if (L > host.budget) {
@@ -252,11 +178,14 @@ export function removeBend(host: ReshapeHost, vid: number): MoveResult & { remov
   const v = t.verts[idx];
   if (!v) return fail('pocket');
   if (v.pocket) return fail('pocket');
+  if (v.bolted) return fail('bolted');
   const n = t.verts.length;
   const a = t.verts[(idx + n - 1) % n]!;
   const b = t.verts[(idx + 1) % n]!;
+  // Steel on either side of the bend: it is not going anywhere.
+  if (a.mat === 'steel' || v.mat === 'steel') return fail('steel');
   const q = closestOnSegment(v.x, v.y, a.x, a.y, b.x, b.y);
-  const cost = Math.hypot(v.x - q.x, v.y - q.y);
+  const cost = hyp(v.x - q.x, v.y - q.y);
   if (cost > host.budget + 1e-6) return fail('budget');
 
   const saved = {
@@ -300,7 +229,11 @@ export function removeBend(host: ReshapeHost, vid: number): MoveResult & { remov
   return { ...r, removed: true };
 }
 
-/** One pointer drag of a knob (or of a freshly inserted bend, when grabbing an edge midpoint). */
+/**
+ * One pointer drag of a knob (or of a freshly inserted bend, when grabbing an edge midpoint).
+ * With a finite `reach` (grab tokens), the knob may not stray further than that from where the
+ * grab began.
+ */
 export class DragSession {
   applied = 0;
   lastBlocked: BlockReason | null = null;
@@ -310,9 +243,13 @@ export class DragSession {
     private grabDx: number,
     private grabDy: number,
     readonly inserted: boolean,
+    /** Where the knob was when the grab began. */
+    readonly ax: number,
+    readonly ay: number,
+    readonly reach: number,
   ) {}
 
-  static begin(host: ReshapeHost, handle: Handle, px: number, py: number): DragSession | null {
+  static begin(host: ReshapeHost, handle: Handle, px: number, py: number, reach = Infinity): DragSession | null {
     let idx = handle.index;
     let inserted = false;
     if (handle.kind === 'edge') {
@@ -322,12 +259,26 @@ export class DragSession {
       inserted = true;
     }
     const v = host.table.verts[idx];
-    if (!v) return null;
-    return new DragSession(v.id, v.x - px, v.y - py, inserted);
+    if (!v || v.bolted) return null;
+    return new DragSession(v.id, v.x - px, v.y - py, inserted, v.x, v.y, reach);
   }
 
   move(host: ReshapeHost, px: number, py: number): MoveResult {
-    const r = moveVertex(host, this.vid, px + this.grabDx, py + this.grabDy);
+    let tx = px + this.grabDx;
+    let ty = py + this.grabDy;
+    let clipped = false;
+    if (this.reach < Infinity) {
+      const dx = tx - this.ax;
+      const dy = ty - this.ay;
+      const d = hyp(dx, dy);
+      if (d > this.reach) {
+        tx = this.ax + (dx * this.reach) / d;
+        ty = this.ay + (dy * this.reach) / d;
+        clipped = true;
+      }
+    }
+    const r = moveVertex(host, this.vid, tx, ty);
+    if (clipped && !r.blocked) r.blocked = 'reach';
     this.applied += r.applied;
     this.lastBlocked = r.blocked;
     return r;

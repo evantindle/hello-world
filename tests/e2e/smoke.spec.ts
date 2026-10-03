@@ -1,29 +1,10 @@
-import { expect, test, type Page } from '@playwright/test';
-
-declare global {
-  interface Window {
-    // Loosely typed on purpose: this is the page's debug surface (src/debug/api.ts).
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    __bendy: any;
-  }
-}
-
-const SHOTS = 'e2e-out';
-
-async function boot(page: Page, query: string, errors: string[]) {
-  page.on('pageerror', (e) => errors.push(String(e)));
-  page.on('console', (m) => {
-    if (m.type() === 'error') errors.push(m.text());
-  });
-  await page.goto(`/${query}`);
-  await page.waitForFunction(() => window.__bendy?.ready === true);
-  await page.evaluate(() => document.fonts.ready);
-}
+import { expect, test } from '@playwright/test';
+import { boot, SHOTS } from './helpers';
 
 test('a full turn: spin, bend, smack, settle', async ({ page }) => {
   const errors: string[] = [];
-  await boot(page, '?seed=42&mute=1', errors);
-  await expect(page.getByRole('button', { name: 'PLAY!' })).toBeVisible();
+  await boot(page, '?seed=42&mute=1&remix=0', errors);
+  await expect(page.getByRole('button', { name: 'Free Play' })).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/01-title.png` });
 
   await page.evaluate(() => {
@@ -68,12 +49,12 @@ test('a full turn: spin, bend, smack, settle', async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
-test('real pointer input: drag a knob with the mouse, hold the SMACK button', async ({ page }) => {
+test('real pointer input: drag a knob, turn the dial, put on English, press SMACK', async ({ page }) => {
   const errors: string[] = [];
-  // Reduced motion stops the bouncing PLAY button (and exercises that CSS path).
+  // Reduced motion stops the bouncing buttons (and exercises that CSS path).
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  await boot(page, '?seed=9&mute=1', errors);
-  await page.getByRole('button', { name: 'PLAY!' }).click();
+  await boot(page, '?seed=9&mute=1&remix=0', errors);
+  await page.getByRole('button', { name: 'Free Play' }).click();
   await page.waitForFunction(() => window.__bendy.phase() === 'spin');
   // Tap the table to skip the spin.
   await page.mouse.click(640, 360);
@@ -96,12 +77,24 @@ test('real pointer input: drag a knob with the mouse, hold the SMACK button', as
   expect(after.verts[3].x).toBeGreaterThan(knob.x + 20);
   expect(after.budget).toBeLessThan(600);
 
-  // Hold the SMACK button, then let go.
-  const shoot = page.getByRole('button', { name: 'Hold to charge, release to shoot' });
-  await shoot.hover();
+  // Turn the power dial with the keyboard, drag some draw onto the English widget, SMACK.
+  const dial0 = await page.evaluate(() => window.__bendy.game.dial);
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('Shift+ArrowUp');
+  expect(await page.evaluate(() => window.__bendy.game.dial)).toBeCloseTo(Math.min(1, dial0 + 0.12), 5);
+  const spinBall = page.locator('.spinw-ball');
+  const sb = (await spinBall.boundingBox())!;
+  await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2);
   await page.mouse.down();
-  await page.waitForTimeout(700);
+  await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height * 0.85, { steps: 4 });
   await page.mouse.up();
+  const eng = await page.evaluate(() => ({
+    x: window.__bendy.game.englishX,
+    y: window.__bendy.game.englishY,
+  }));
+  expect(eng.y).toBeGreaterThan(0.5);
+  await page.screenshot({ path: `${SHOTS}/05b-dial.png` });
+  await page.getByRole('button', { name: 'Shoot' }).click();
   await page.waitForFunction(() => ['strike', 'sim', 'resolve'].includes(window.__bendy.phase()));
   expect(await page.evaluate(() => window.__bendy.state().shots)).toBe(1);
   expect(errors).toEqual([]);
@@ -128,7 +121,7 @@ test('phone portrait rotates the table and still plays', async ({ browser }) => 
     isMobile: true,
   });
   const errors: string[] = [];
-  await boot(page, '?seed=11&mute=1', errors);
+  await boot(page, '?seed=11&mute=1&remix=0', errors);
   await page.evaluate(() => {
     window.__bendy.manual(true);
     window.__bendy.start();
@@ -139,4 +132,35 @@ test('phone portrait rotates the table and still plays', async ({ browser }) => 
   expect(await page.evaluate(() => window.__bendy.shoot(0.6))).toBe(true);
   expect(errors).toEqual([]);
   await page.close();
+});
+
+test('toy tray: drag a wall onto the table with a real pointer, then undo it', async ({ page }) => {
+  const errors: string[] = [];
+  await boot(page, '?seed=3&mute=1&toys=1&remix=0', errors);
+  await page.evaluate(() => {
+    window.__bendy.start();
+    window.__bendy.skipSpin();
+    window.__bendy.untilPhase('plan', 10);
+  });
+  await page.waitForFunction(() => window.__bendy.cameraSettled());
+  const wall = page.getByRole('button', { name: 'WALL' });
+  await expect(wall).toBeVisible();
+  const from = (await wall.boundingBox())!;
+  const canvas = (await page.locator('#world').boundingBox())!;
+  const to = await page.evaluate(() => window.__bendy.toScreen(520, 150));
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(canvas.x + to.x, canvas.y + to.y, { steps: 8 });
+  await page.mouse.up();
+  const placed = await page.evaluate(() => window.__bendy.state());
+  expect(placed.parts).toHaveLength(1);
+  expect(placed.parts[0].kind).toBe('stub');
+  expect(Math.abs(placed.parts[0].x - 520)).toBeLessThan(2);
+  expect(placed.tray[0]).toBe(0);
+  await page.screenshot({ path: `${SHOTS}/06-tray.png` });
+  await page.getByRole('button', { name: 'UNDO' }).click();
+  const undone = await page.evaluate(() => window.__bendy.state());
+  expect(undone.parts).toHaveLength(0);
+  expect(undone.tray[0]).toBe(1);
+  expect(errors).toEqual([]);
 });

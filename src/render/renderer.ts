@@ -5,10 +5,16 @@ import type { Game } from '../game/game';
 import type { Camera } from './camera';
 import { drawBalls, drawBallShadows, star } from './draw_balls';
 import { drawCue, drawGuide, drawSpeedLines } from './draw_cue';
+import { drawEditOver, drawEditUnder } from './draw_edit';
+import { applyFlip, drawFlyingBalls, drawUnderside, FLIP_T, flipPose } from './draw_flip';
+import { drawFloorParts } from './draw_floor';
+import { PreviewView } from './draw_preview';
+import { drawPartShadows, drawRaisedParts } from './draw_parts';
 import { buildVisual, drawHandles, drawPockets, drawTableBody, type HandleView } from './draw_table';
 
 export class Renderer {
   readonly ctx: CanvasRenderingContext2D;
+  private readonly previewView = new PreviewView();
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -38,21 +44,63 @@ export class Renderer {
     const { ctx, game, fx, cam } = this;
     ctx.setTransform(cam.dpr, 0, 0, cam.dpr, 0, 0);
     ctx.clearRect(0, 0, cam.cssW, cam.cssH);
-    cam.apply(ctx);
     const vt = buildVisual(game.table, fx.jelly);
-    drawTableBody(ctx, game, fx, vt);
+    if (fx.flip) {
+      this.drawFlip(vt);
+      return;
+    }
+    cam.apply(ctx);
+    drawTableBody(ctx, game, fx, vt, cam);
     drawPockets(ctx, game, fx);
-    const guide = game.phase === 'plan' ? game.guide() : undefined;
-    drawGuide(ctx, game, fx, cam, 'under', guide);
+    drawFloorParts(ctx, game, fx, cam, vt);
+    const view = this.view();
+    drawEditUnder(ctx, game, fx, view);
+    // Free Play and the Toy Box show the whole chain; elsewhere, the one honest guide line.
+    const chain = game.rules.preview === 'chain';
+    const preview = game.preview;
+    const guide = game.phase === 'plan' && !chain ? game.guide() : undefined;
+    this.previewView.sync(preview, fx.time);
+    if (chain) this.previewView.drawUnder(ctx, game, fx);
+    else drawGuide(ctx, game, fx, cam, 'under', guide);
+    drawPartShadows(ctx, game, cam);
     drawBallShadows(ctx, game, fx, cam);
+    drawRaisedParts(ctx, game, fx, cam);
     drawBalls(ctx, game, fx, cam);
-    drawGuide(ctx, game, fx, cam, 'over', guide);
+    if (chain) this.previewView.drawOver(ctx, game, fx, cam);
+    else drawGuide(ctx, game, fx, cam, 'over', guide);
     drawSpeedLines(ctx, fx);
     drawCue(ctx, game, fx, cam);
-    drawHandles(ctx, game, fx, vt, this.view(), cam);
+    drawHandles(ctx, game, fx, vt, view, cam);
+    drawEditOver(ctx, game, fx, cam, view);
     drawParticles(ctx, fx, cam.upright);
     fx.pops.draw(ctx, cam.upright);
+    this.drawScreenFx();
+  }
 
+  /** A lost level: the table flips over and falls away; the balls tumble past it. */
+  private drawFlip(vt: ReturnType<typeof buildVisual>): void {
+    const { ctx, game, fx, cam } = this;
+    const pose = flipPose(fx.flip!.t);
+    if (fx.flip!.t < FLIP_T + 0.6) {
+      applyFlip(ctx, cam, game, pose);
+      if (pose.sy < 0) drawUnderside(ctx, vt);
+      else {
+        drawTableBody(ctx, game, fx, vt, cam);
+        drawPockets(ctx, game, fx);
+        drawFloorParts(ctx, game, fx, cam, vt);
+        drawPartShadows(ctx, game, cam);
+        drawRaisedParts(ctx, game, fx, cam);
+      }
+    }
+    cam.apply(ctx);
+    drawFlyingBalls(ctx, game, fx, cam);
+    drawParticles(ctx, fx, cam.upright);
+    fx.pops.draw(ctx, cam.upright);
+    this.drawScreenFx();
+  }
+
+  private drawScreenFx(): void {
+    const { ctx, fx, cam } = this;
     ctx.setTransform(cam.dpr, 0, 0, cam.dpr, 0, 0);
     if (fx.vignette > 0.01) {
       const w = cam.cssW;
@@ -146,6 +194,61 @@ function drawParticles(ctx: CanvasRenderingContext2D, fx: Fx, upright: number): 
         ctx.arc(p.x, p.y, p.size * (0.25 + 0.75 * (1 - (1 - e) * (1 - e))), 0, TAU);
         ctx.lineWidth = 7 * k + 1;
         ctx.strokeStyle = p.color;
+        ctx.stroke();
+        break;
+      }
+      case 'shard': {
+        ctx.globalAlpha = Math.min(1, k * 2);
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.rot);
+        ctx.beginPath();
+        ctx.moveTo(0, -p.size);
+        ctx.lineTo(p.size * 0.6, p.size * 0.5);
+        ctx.lineTo(-p.size * 0.5, p.size * 0.3);
+        ctx.closePath();
+        ctx.fillStyle = p.color;
+        ctx.fill();
+        ctx.lineWidth = 1.2;
+        ctx.strokeStyle = COLORS.ink;
+        ctx.stroke();
+        ctx.restore();
+        break;
+      }
+      case 'yolk': {
+        ctx.globalAlpha = Math.min(1, k * 3);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size * (1.2 - 0.2 * k), 0, TAU);
+        ctx.fillStyle = p.color;
+        ctx.fill();
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = COLORS.ink;
+        ctx.stroke();
+        break;
+      }
+      case 'feather': {
+        ctx.globalAlpha = Math.min(1, k * 2);
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.rot + Math.sin(p.life * 6) * 0.6);
+        ctx.beginPath();
+        ctx.ellipse(0, 0, p.size, p.size * 0.35, 0, 0, TAU);
+        ctx.fillStyle = p.color;
+        ctx.fill();
+        ctx.lineWidth = 1.2;
+        ctx.strokeStyle = COLORS.ink;
+        ctx.stroke();
+        ctx.restore();
+        break;
+      }
+      case 'blip': {
+        ctx.globalAlpha = Math.min(1, k * 2);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, Math.max(0.5, p.size * k), 0, TAU);
+        ctx.fillStyle = p.color;
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = COLORS.ink;
         ctx.stroke();
         break;
       }

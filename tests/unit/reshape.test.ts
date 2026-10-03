@@ -11,21 +11,10 @@ import {
   removeBend,
   type ReshapeHost,
 } from '../../src/game/reshape';
-import type { Ball } from '../../src/physics/world';
+import { makeBall, type Ball } from '../../src/physics/world';
 
 function ball(id: number, x: number, y: number): Ball {
-  return {
-    id,
-    kind: id === 0 ? 'cue' : 'object',
-    num: id,
-    color: '#fff',
-    stripe: false,
-    x,
-    y,
-    vx: 0,
-    vy: 0,
-    active: true,
-  };
+  return makeBall({ id, x, y });
 }
 
 function host(balls: Ball[], table: Table = createTable(), budget = BUDGET): ReshapeHost {

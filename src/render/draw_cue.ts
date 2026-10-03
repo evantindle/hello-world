@@ -29,7 +29,8 @@ function stickPose(game: Game, fx: Fx): StickPose | null {
     case 'spin':
       return { pull: 14, bend: 0, alpha: 1 };
     case 'plan': {
-      if (!game.charging) return { pull: 16 + 4 * Math.sin(t * 3), bend: 0, alpha: 1 };
+      // Idle: the stick sits back a little further the higher the dial is set.
+      if (!game.charging) return { pull: 14 + chargePull(game.dial) * 0.22 + 4 * Math.sin(t * 3), bend: 0, alpha: 1 };
       const p = game.power;
       const shake = p * p * 3.5 + (p >= 1 ? 2.5 : 0);
       return {
@@ -44,7 +45,8 @@ function stickPose(game: Game, fx: Fx): StickPose | null {
       const u = Math.min(1, (k - STRIKE_HOLD) / STRIKE_LUNGE);
       return { pull: fx.releasePull + 6 + (-8 - fx.releasePull - 6) * u, bend: 0, alpha: 1 };
     }
-    case 'sim': {
+    case 'sim':
+    case 'replay': {
       const k = game.phaseT / 0.55;
       if (k >= 1) return null;
       return { pull: -8 + 220 * cubicOut(k), bend: 0, alpha: 1 - k };
@@ -79,8 +81,20 @@ export function drawCue(ctx: CanvasRenderingContext2D, game: Game, fx: Fx, cam: 
       }
     }
   }
-  drawStick(ctx, cue.x, cue.y, game.aim, pose.pull, pose.bend, pose.alpha, false);
-  if (game.phase === 'plan' && game.charging) drawPowerRing(ctx, cue.x, cue.y, game.power, fx.time);
+  // Side English: the stick lines up off-centre, where it will hit the ball.
+  const side = game.phase === 'plan' || game.phase === 'strike' ? game.rules.english ? game.englishX : 0 : 0;
+  const ox = -Math.sin(game.aim) * side * R * 0.55;
+  const oy = Math.cos(game.aim) * side * R * 0.55;
+  drawStick(ctx, cue.x + ox, cue.y + oy, game.aim, pose.pull, pose.bend, pose.alpha, false);
+  if (game.phase === 'plan') {
+    if (game.charging) drawPowerRing(ctx, cue.x, cue.y, game.power, fx.time);
+    else if (fx.dialShow > 0) {
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, fx.dialShow * 2) * 0.85;
+      drawPowerRing(ctx, cue.x, cue.y, game.dial, fx.time);
+      ctx.restore();
+    }
+  }
   void cam;
 }
 
@@ -315,9 +329,18 @@ export function drawGuide(
   ctx.save();
   ctx.globalAlpha = intro;
   ctx.lineCap = 'round';
-  if (Math.hypot(x1 - x0, y1 - y0) > 2 && (x1 - x0) * dx + (y1 - y0) * dy > 0) {
+  ctx.lineJoin = 'round';
+  const bent = g.curve && g.curve.length > 1;
+  if (bent || g.hop || (Math.hypot(x1 - x0, y1 - y0) > 2 && (x1 - x0) * dx + (y1 - y0) * dy > 0)) {
     ctx.beginPath();
     ctx.moveTo(x0, y0);
+    // With side English the path bends through the skid before running straight.
+    if (bent) for (let i = 1; i < g.curve!.length; i++) ctx.lineTo(g.curve![i]!.x, g.curve![i]!.y);
+    // Through a portal: into the entrance, then on from the exit.
+    if (g.hop) {
+      ctx.lineTo(g.hop.path.x1, g.hop.path.y1);
+      ctx.moveTo(g.path.x0, g.path.y0);
+    }
     ctx.lineTo(x1, y1);
     ctx.lineWidth = 9;
     ctx.strokeStyle = 'rgba(20,8,40,0.35)';
@@ -329,6 +352,22 @@ export function drawGuide(
     ctx.stroke();
     ctx.setLineDash([]);
   }
+  if (g.hop) {
+    // Little swirls where the ball dives in and pops out.
+    for (const [px, py, col] of [
+      [g.hop.path.x1, g.hop.path.y1, '#ff9f1c'],
+      [g.path.x0, g.path.y0, '#4cc9f0'],
+    ] as const) {
+      ctx.beginPath();
+      ctx.arc(px, py, 13, 0, TAU);
+      ctx.setLineDash([5, 5]);
+      ctx.lineDashOffset = t * 40;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = col;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
   // Ghost ball where the cue will make contact.
   ctx.beginPath();
   ctx.arc(x1, y1, R, 0, TAU);
@@ -339,7 +378,7 @@ export function drawGuide(
   ctx.stroke();
   ctx.setLineDash([]);
 
-  if (g.kind === 'rail') {
+  if (g.kind === 'rail' || g.kind === 'part' || g.kind === 'bumper') {
     const cx = x1 - g.nx * R;
     const cy = y1 - g.ny * R;
     ctx.save();
@@ -372,10 +411,50 @@ export function drawGuide(
   ctx.restore();
 }
 
+/** What the guide says where it stops short: past a pad, portal or black hole it would be guessing. */
+const STOP_WORDS: Partial<Record<Guide['kind'], [string, string]>> = {
+  boost: ['ZOOM?', '#ffd23f'],
+  portal: ['WHOOSH?', '#4cc9f0'],
+  vortex: ['GLORP?', '#c77dff'],
+};
+
+function guideLabel(
+  ctx: CanvasRenderingContext2D,
+  game: Game,
+  cam: Camera,
+  t: number,
+  text: string,
+  color: string,
+  x: number,
+  y: number,
+): void {
+  ctx.save();
+  ctx.translate(x, y + Math.sin(t * 7) * 4);
+  ctx.rotate(cam.upright + Math.sin(t * 5) * 0.08);
+  const s = backOut(Math.min(1, game.phaseT * 2.5));
+  ctx.scale(s, s);
+  ctx.font = `30px ${POP_FONT}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 7;
+  ctx.strokeStyle = COLORS.ink;
+  ctx.strokeText(text, 0, 0);
+  ctx.fillStyle = color;
+  ctx.fillText(text, 0, 0);
+  ctx.restore();
+}
+
 function drawGuideOver(ctx: CanvasRenderingContext2D, game: Game, fx: Fx, cam: Camera, g: Guide): void {
   const t = fx.time;
   ctx.save();
   ctx.globalAlpha = Math.min(1, game.phaseT * 3);
+  const stop = STOP_WORDS[g.kind];
+  if (stop) {
+    // Above the ghost ball, toward the top of the screen.
+    const up = cam.screenToWorldDir(0, -1);
+    guideLabel(ctx, game, cam, t, stop[0], stop[1], g.path.x1 + up.x * (R + 30), g.path.y1 + up.y * (R + 30));
+  }
   if (g.target) {
     const b = g.target.ball;
     const len = 125 + 10 * Math.sin(t * 6);
@@ -402,23 +481,7 @@ function drawGuideOver(ctx: CanvasRenderingContext2D, game: Game, fx: Fx, cam: C
     ctx.strokeStyle = '#ff4d6d';
     ctx.stroke();
     ctx.setLineDash([]);
-    const lx = px + p.inx * (r + 34);
-    const ly = py + p.iny * (r + 34) + Math.sin(t * 7) * 4;
-    ctx.save();
-    ctx.translate(lx, ly);
-    ctx.rotate(cam.upright + Math.sin(t * 5) * 0.08);
-    const s = backOut(Math.min(1, game.phaseT * 2.5));
-    ctx.scale(s, s);
-    ctx.font = `30px ${POP_FONT}`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.lineJoin = 'round';
-    ctx.lineWidth = 7;
-    ctx.strokeStyle = COLORS.ink;
-    ctx.strokeText('GULP?', 0, 0);
-    ctx.fillStyle = '#ff4d6d';
-    ctx.fillText('GULP?', 0, 0);
-    ctx.restore();
+    guideLabel(ctx, game, cam, t, 'GULP?', '#ff4d6d', px + p.inx * (r + 34), py + p.iny * (r + 34));
   }
   ctx.restore();
 }

@@ -1,4 +1,6 @@
 import type { Game, Phase } from '../game/game';
+import { solutionFrom, type SolutionStroke } from '../game/levels/solution';
+import type { Edit } from '../game/record';
 import type { Camera } from '../render/camera';
 import type { Handle, MoveResult } from '../game/reshape';
 import { listHandles } from '../game/reshape';
@@ -12,6 +14,12 @@ export interface DebugDeps {
   step: (dt: number) => void;
   draw: () => void;
   setManual: (on: boolean) => void;
+  /** Opens a Classic level's intro card (false if there is no such level). */
+  openLevel?: (id: string) => boolean;
+  /** A link to the last shot (null if there is none). */
+  shareLink?: () => Promise<string | null>;
+  /** Starts a Toy Box game. */
+  toyBox?: () => void;
 }
 
 /**
@@ -60,8 +68,15 @@ export function installDebugApi(d: DebugDeps): void {
       game.skipSpin();
       return stepUntil(() => game.phase !== 'spin', 5);
     },
+    /** Sets the dial and presses SHOOT (the windup then plays out as time is stepped). */
     shoot(power: number) {
       return game.shoot(power);
+    },
+    setDial(v: number) {
+      game.setDial(v);
+    },
+    setEnglish(x: number, y: number) {
+      game.setEnglish(x, y);
     },
     dragVertex(index: number, x: number, y: number): MoveResult | null {
       const v = game.table.verts[index];
@@ -84,6 +99,87 @@ export function installDebugApi(d: DebugDeps): void {
     undo() {
       return game.undo();
     },
+    redo() {
+      return game.redo();
+    },
+    reset() {
+      return game.reset();
+    },
+    /** Puts tray item `item` down at (x, y). */
+    place(item: number, x: number, y: number) {
+      const ok = game.placeFromTray(item, x, y);
+      d.draw();
+      return ok;
+    },
+    /** Drags toy `id` from where it is toward (x, y) (and back into the tray with `stow`). */
+    dragPart(id: number, x: number, y: number, stow = false) {
+      const p = game.table.parts.find((q) => q.id === id);
+      if (!p || !game.beginPartDrag(id, p.x, p.y, false)) return null;
+      const r = game.partDragTo(x, y);
+      game.endPartDrag(stow);
+      d.draw();
+      return r;
+    },
+    /** Turns toy `id` toward direction index k (5-degree steps from +x, clockwise). */
+    turnPart(id: number, k: number) {
+      const p = game.table.parts.find((q) => q.id === id);
+      if (!p || !game.beginPartDrag(id, p.x, p.y, true)) return false;
+      game.turnPartTo(k);
+      game.endPartDrag();
+      d.draw();
+      return true;
+    },
+    /** Classic: a level's intro card, with the level set up behind it. */
+    openLevel(id: string) {
+      const ok = d.openLevel?.(id) ?? false;
+      d.draw();
+      return ok;
+    },
+    /** Replays edits as recorded (grabs, toys, undo...). */
+    applyEdits(edits: Edit[]) {
+      for (const e of edits) game.applyEdit(e);
+      d.draw();
+    },
+    /** One recorded stroke: its edits, dial and English, then SHOOT (time still has to pass). */
+    playStroke(s: SolutionStroke) {
+      for (const e of s.edits) game.applyEdit(e);
+      game.setDial(s.dial / 1000);
+      if (game.rules.english) game.setEnglish(s.ex, s.ey);
+      return game.shoot();
+    },
+    /** Watch the last shot again (time still has to pass). */
+    replay() {
+      return game.replay();
+    },
+    stopReplay() {
+      game.stopReplay();
+    },
+    rewind() {
+      return game.rewind();
+    },
+    respin() {
+      return game.respin();
+    },
+    clearToys() {
+      return game.clearToys();
+    },
+    toyBox() {
+      d.toyBox?.();
+    },
+    /** A link to the last shot (a promise). */
+    shareLink() {
+      return d.shareLink?.() ?? Promise.resolve(null);
+    },
+    /** After winning a level: the strokes played, as a solution file (tests/levels/solutions). */
+    dumpSolution() {
+      if (!game.levelId) return null;
+      const sol = solutionFrom(game.levelId, game.history, game.lastOver?.stars ?? 0);
+      return JSON.stringify(sol, null, 1);
+    },
+    /** This turn's edits so far (what a stroke records). */
+    edits() {
+      return structuredClone(game.edits);
+    },
     /** World -> CSS px relative to the canvas, using the live camera. */
     toScreen(x: number, y: number) {
       return d.cam.worldToScreen(x, y);
@@ -104,6 +200,9 @@ export function installDebugApi(d: DebugDeps): void {
         hunger: game.hunger,
         aim: game.aim,
         verts: game.table.verts.map((v) => ({ id: v.id, x: v.x, y: v.y, pocket: v.pocket })),
+        parts: structuredClone(game.table.parts),
+        tray: game.tray.map((t) => t.count),
+        tokens: game.tokens,
         balls: game.balls.map((b) => ({ id: b.id, x: b.x, y: b.y, active: b.active })),
       };
     },

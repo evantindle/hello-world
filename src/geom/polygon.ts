@@ -1,4 +1,4 @@
-import type { Vec } from '../core/vec';
+import { hyp, type Vec } from '../core/vec';
 
 /** Shoelace signed area. Positive means interior on the left of each edge (see config.ts). */
 export function signedArea(pts: readonly Vec[]): number {
@@ -54,7 +54,7 @@ export function distToSegment(
   by: number,
 ): number {
   const q = closestOnSegment(px, py, ax, ay, bx, by);
-  return Math.hypot(px - q.x, py - q.y);
+  return hyp(px - q.x, py - q.y);
 }
 
 function orient(a: Vec, b: Vec, c: Vec): number {
@@ -97,8 +97,51 @@ export function interiorAngle(prev: Vec, p: Vec, next: Vec): number {
   const d1y = p.y - prev.y;
   const d2x = next.x - p.x;
   const d2y = next.y - p.y;
+  // For display and tests only; simulation code compares angles with angleBelow/angleAbove.
+  // eslint-disable-next-line no-restricted-properties
   const turn = Math.atan2(d1x * d2y - d1y * d2x, d1x * d2x + d1y * d2y);
   return Math.PI - turn;
+}
+
+/** A threshold angle K given by its cosine and sine (see the *_TURN constants in config.ts). */
+export interface Turn {
+  c: number;
+  s: number;
+}
+
+/**
+ * Compares the turn at p against K without trig. The turn is atan2(cross, dot) of the two edge
+ * directions, and the interior angle is PI minus it. Returns +1 if the turn is greater than K,
+ * -1 if smaller, measured the short way round from K. So for K in (0, PI), +1 means the interior
+ * angle is below PI - K; for K in (-PI, 0), -1 means it is above PI - K.
+ */
+export function compareTurn(prev: Vec, p: Vec, next: Vec, k: Turn): number {
+  const d1x = p.x - prev.x;
+  const d1y = p.y - prev.y;
+  const d2x = next.x - p.x;
+  const d2y = next.y - p.y;
+  const cr = d1x * d2y - d1y * d2x;
+  const dt = d1x * d2x + d1y * d2y;
+  // sin(turn - K), up to a positive scale.
+  const s = cr * k.c - dt * k.s;
+  return s > 0 ? 1 : s < 0 ? -1 : 0;
+}
+
+/** True if the interior angle at p is below PI - K, for a threshold turn K in (0, PI). */
+export function angleBelow(prev: Vec, p: Vec, next: Vec, k: Turn): boolean {
+  const cr = (p.x - prev.x) * (next.y - p.y) - (p.y - prev.y) * (next.x - p.x);
+  if (cr === 0) {
+    // Straight on (interior 180) or a hairpin (interior 0).
+    const dt = (p.x - prev.x) * (next.x - p.x) + (p.y - prev.y) * (next.y - p.y);
+    return dt < 0;
+  }
+  return cr > 0 && compareTurn(prev, p, next, k) > 0;
+}
+
+/** True if the interior angle at p is above PI - K, for a threshold turn K in (-PI, 0). */
+export function angleAbove(prev: Vec, p: Vec, next: Vec, k: Turn): boolean {
+  const cr = (p.x - prev.x) * (next.y - p.y) - (p.y - prev.y) * (next.x - p.x);
+  return cr < 0 && compareTurn(prev, p, next, k) < 0;
 }
 
 export interface BoundaryPoint {
@@ -118,9 +161,9 @@ export function nearestBoundary(px: number, py: number, pts: readonly Vec[]): Bo
     const a = pts[i]!;
     const b = pts[(i + 1) % n]!;
     const q = closestOnSegment(px, py, a.x, a.y, b.x, b.y);
-    const d = Math.hypot(px - q.x, py - q.y);
+    const d = hyp(px - q.x, py - q.y);
     if (d < best.dist) {
-      const l = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+      const l = hyp(b.x - a.x, b.y - a.y) || 1;
       best = { x: q.x, y: q.y, nx: -(b.y - a.y) / l, ny: (b.x - a.x) / l, dist: d, edge: i };
     }
   }

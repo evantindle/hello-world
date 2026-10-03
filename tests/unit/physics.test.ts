@@ -4,21 +4,10 @@ import { createRng } from '../../src/core/rng';
 import { pointInPolygon } from '../../src/geom/polygon';
 import { buildGeom, createTable, type Table } from '../../src/geom/table';
 import { rackBalls } from '../../src/game/rules';
-import { collideBalls, createWorld, stepWorld, type Ball, type PhysEvent } from '../../src/physics/world';
+import { collideBalls, createWorld, makeBall, stepWorld, type Ball, type PhysEvent } from '../../src/physics/world';
 
 function ball(id: number, x: number, y: number, vx = 0, vy = 0): Ball {
-  return {
-    id,
-    kind: id === 0 ? 'cue' : 'object',
-    num: id,
-    color: '#fff',
-    stripe: false,
-    x,
-    y,
-    vx,
-    vy,
-    active: true,
-  };
+  return makeBall({ id, x, y, vx, vy });
 }
 
 function run(balls: Ball[], table: Table, seconds: number) {
@@ -228,5 +217,63 @@ describe('settling', () => {
         }
       }
     }
+  });
+});
+
+describe('mass', () => {
+  it('a heavy ball barely notices a light one, and momentum is conserved', () => {
+    const cue = ball(0, 0, 0, 1000, 0);
+    const heavy = makeBall({ id: 8, x: 2 * R - 1, y: 0, variant: 'bowling' });
+    expect(heavy.invMass).toBeCloseTo(1 / 3);
+    collideBalls(cue, heavy, []);
+    // Momentum with masses 1 and 3.
+    expect(cue.vx * 1 + heavy.vx * 3).toBeCloseTo(1000, 6);
+    expect(heavy.vx).toBeLessThan(600);
+    expect(cue.vx).toBeLessThan(0); // bounces back off the bowling ball
+  });
+
+  it('random oblique hits between unequal masses never gain energy', () => {
+    const rng = createRng(11);
+    for (let i = 0; i < 200; i++) {
+      const ang = rng.range(0, Math.PI * 2);
+      const d = rng.range(R, 2 * R - 0.1);
+      const a = ball(1, 0, 0, rng.range(-2000, 2000), rng.range(-2000, 2000));
+      const b = makeBall({ id: 2, x: Math.cos(ang) * d, y: Math.sin(ang) * d, variant: 'bowling' });
+      b.vx = rng.range(-2000, 2000);
+      b.vy = rng.range(-2000, 2000);
+      const ma = 1 / a.invMass;
+      const mb = 1 / b.invMass;
+      const px = ma * a.vx + mb * b.vx;
+      const ke = ma * (a.vx ** 2 + a.vy ** 2) + mb * (b.vx ** 2 + b.vy ** 2);
+      collideBalls(a, b, []);
+      expect(ma * a.vx + mb * b.vx).toBeCloseTo(px, 6);
+      expect(ma * (a.vx ** 2 + a.vy ** 2) + mb * (b.vx ** 2 + b.vy ** 2)).toBeLessThanOrEqual(ke + 1e-6);
+    }
+  });
+});
+
+describe('turn log', () => {
+  it('records the first contact, cushions before it, and each pot with its generation', () => {
+    // The cue banks off the bottom rail first, then runs into the 3.
+    const t = createTable();
+    const cue = ball(0, 300, 400, 400, 400);
+    const three = ball(3, 600, 256);
+    const { w, events } = run([cue, three], t, 6);
+    const hits = events.filter((e) => e.type === 'ballHit');
+    expect(hits.length).toBeGreaterThan(0);
+    expect(w.log.firstContact).toBe(3);
+    expect(w.log.cushionsBeforeContact).toBeGreaterThanOrEqual(1);
+    expect(three.gen).toBe(1);
+    const pot = w.log.pots.find((p) => p.ball === 3);
+    if (pot) expect(pot.gen).toBe(1);
+  });
+
+  it('a scratch is logged with its pocket, and the cue has no resting place', () => {
+    const t = createTable();
+    const cue = ball(0, 100, 100, -400, -400);
+    const { w } = run([cue], t, 3);
+    expect(cue.active).toBe(false);
+    expect(w.log.scratch?.pocket).toBe(0);
+    expect(w.log.pots).toHaveLength(1);
   });
 });
