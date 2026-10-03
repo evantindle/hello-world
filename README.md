@@ -39,8 +39,10 @@ Win for one to three stars. Lose and the table gets flipped.
    rail to add a new bend, and double-tap a bend to remove it. Drag toys out of the box onto the
    table. Drag a toy to move it, and turn it with its knob, the mouse wheel, or Q/E. **UNDO**,
    **REDO** and **RESET** cover everything you did this turn.
-3. **Smack.** Set the power on the dial. Drag the dot on the little cue ball for English: low to
-   screw back, high to follow through, sideways to swerve. Then hit **SMACK**.
+3. **Smack.** Drag on the power dial: up for more, down for less. Drag slowly for fine steps; it
+   clicks at every 5%. Drag on the little cue ball for English: low to screw back, high to follow
+   through, sideways to swerve. Both controls move by how far you drag, never jumping to your
+   finger. Then tap **SMACK**.
 
 A scratch (the cue ball going in) costs a stroke, and the pocket spits the cue ball back out
 somewhere safe. In Free Play the pockets also get hungry: every shot that pots nothing makes them
@@ -65,19 +67,19 @@ Links only work from a hosted copy of the game, such as GitHub Pages.
 
 ### Controls
 
-| Input                                 | Action                                      |
-| ------------------------------------- | ------------------------------------------- |
-| Drag a knob / ＋                      | Bend the table                              |
-| Double-tap a bend                     | Remove it                                   |
-| Drag a toy; its knob, wheel, Q/E      | Move it; turn it                            |
-| Power dial, ↑/↓ (Shift: bigger steps) | Set the power                               |
-| Dot on the little cue ball            | English                                     |
-| SMACK, Space                          | Shoot                                       |
-| Tap / Space during the spin           | Skip ahead                                  |
-| Z, Y (or Shift+Z), R                  | Undo, redo, reset the turn                  |
-| Hold F (or HOLD)                      | Fast-forward a shot                         |
-| Esc                                   | Cancel a windup, stop a replay, close a box |
-| M                                     | Mute                                        |
+| Input                            | Action                                      |
+| -------------------------------- | ------------------------------------------- |
+| Drag a knob / ＋                 | Bend the table                              |
+| Double-tap a bend                | Remove it                                   |
+| Drag a toy; its knob, wheel, Q/E | Move it; turn it                            |
+| Drag on the power dial, ↑/↓      | Set the power                               |
+| Drag on the little cue ball      | English (double-tap to centre it)           |
+| SMACK, Space                     | Shoot                                       |
+| Tap / Space during the spin      | Skip ahead                                  |
+| Z, Y (or Shift+Z), R             | Undo, redo, reset the turn                  |
+| Hold F (or HOLD)                 | Fast-forward a shot                         |
+| Esc                              | Cancel a windup, stop a replay, close a box |
+| M                                | Mute                                        |
 
 Phones get their own layout: the table turns sideways to fill a tall screen, and the controls move
 out of its way.

@@ -737,6 +737,13 @@ body {
   fill: var(--cream);
   stroke: var(--ink);
   stroke-width: 4;
+  transition: fill 0.12s;
+}
+
+/* The power just clicked into a notch. */
+.dial.notch .dial-knob {
+  fill: var(--yellow);
+  stroke-width: 6;
 }
 
 .dial .shoot {

@@ -1,7 +1,11 @@
+import { Scrub, scrubGain } from './scrub';
+
 /**
  * The English widget: a little cue ball (with the real one's googly eyes) and a chalk dot for
- * where the stick will hit it. Drag the dot: below centre is draw, above is follow, left/right is
- * side spin. Double-tap to reset. Poking it in the eye is possible, and noticed.
+ * where the stick will hit it. Drag on it to move the dot by how far you drag (slowly for fine
+ * steps; it never jumps to your finger): below centre is draw, above is follow, left/right is side
+ * spin. No notches: anywhere on the ball is fair game. Double-tap to reset. Poking it in the eye
+ * is possible, and noticed.
  */
 
 export interface SpinHooks {
@@ -17,6 +21,9 @@ const EYES = [
   { x: 0.34, y: -0.3 },
 ];
 const EYE_HIT = 0.2;
+/** English (in ball radii) per px of drag: slow and careful up to a flick. */
+const FINE = 0.004;
+const COARSE = 0.022;
 
 export class SpinWidget {
   readonly el: HTMLElement;
@@ -24,7 +31,7 @@ export class SpinWidget {
   private readonly dot: HTMLElement;
   private readonly pupils: HTMLElement[] = [];
   private readonly tag: HTMLElement;
-  private dragging: number | null = null;
+  private drag: { id: number; scrub: Scrub; x: number; y: number } | null = null;
   private lastTap = 0;
   private wasOuch = false;
   private shown = '';
@@ -62,31 +69,39 @@ export class SpinWidget {
         return;
       }
       this.lastTap = now;
-      this.dragging = e.pointerId;
+      const { x, y } = this.hooks.get();
+      this.drag = { id: e.pointerId, scrub: new Scrub(e.clientX, e.clientY, e.timeStamp), x, y };
       try {
         this.ball.setPointerCapture(e.pointerId);
       } catch {
         // Synthetic events cannot be captured.
       }
-      this.fromPointer(e);
       e.preventDefault();
     });
     this.ball.addEventListener('pointermove', (e) => {
-      if (e.pointerId === this.dragging) this.fromPointer(e);
+      if (e.pointerId === this.drag?.id) this.scrubTo(e);
     });
     const end = (e: PointerEvent) => {
-      if (e.pointerId === this.dragging) this.dragging = null;
+      if (e.pointerId === this.drag?.id) this.drag = null;
     };
     this.ball.addEventListener('pointerup', end);
     this.ball.addEventListener('pointercancel', end);
   }
 
-  private fromPointer(e: PointerEvent): void {
-    const r = this.ball.getBoundingClientRect();
-    // The dot may reach the edge of the ball, less its own radius.
-    const reach = (r.width / 2) * 0.78;
-    const x = (e.clientX - (r.left + r.width / 2)) / reach;
-    const y = (e.clientY - (r.top + r.height / 2)) / reach;
+  private scrubTo(e: PointerEvent): void {
+    const d = this.drag!;
+    const m = d.scrub.move(e.clientX, e.clientY, e.timeStamp);
+    const g = scrubGain(m.speed, FINE, COARSE);
+    let x = d.x + m.dx * g;
+    let y = d.y + m.dy * g;
+    // Held to the ball's face (the dot slides round the rim rather than stopping dead).
+    const r = Math.hypot(x, y);
+    if (r > 1) {
+      x /= r;
+      y /= r;
+    }
+    d.x = x;
+    d.y = y;
     this.hooks.set(x, y);
   }
 

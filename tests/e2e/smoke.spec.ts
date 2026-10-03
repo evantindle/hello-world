@@ -77,22 +77,51 @@ test('real pointer input: drag a knob, turn the dial, put on English, press SMAC
   expect(after.verts[3].x).toBeGreaterThan(knob.x + 20);
   expect(after.budget).toBeLessThan(600);
 
-  // Turn the power dial with the keyboard, drag some draw onto the English widget, SMACK.
+  // Turn the power dial with the keyboard, then fine-tune it by dragging, put some follow on with
+  // the English widget, SMACK.
   const dial0 = await page.evaluate(() => window.__bendy.game.dial);
   await page.keyboard.press('ArrowUp');
   await page.keyboard.press('Shift+ArrowUp');
-  expect(await page.evaluate(() => window.__bendy.game.dial)).toBeCloseTo(Math.min(1, dial0 + 0.12), 5);
+  const dial1 = await page.evaluate(() => window.__bendy.game.dial);
+  expect(dial1).toBeCloseTo(Math.min(1, dial0 + 0.12), 5);
+  // Pressing on the dial changes nothing; a slow drag upward nudges the power up a little.
+  const ring = (await page.locator('.dial-ring').boundingBox())!;
+  const rx = ring.x + ring.width * 0.1;
+  const ry = ring.y + ring.height * 0.5;
+  await page.mouse.move(rx, ry);
+  await page.mouse.down();
+  expect(await page.evaluate(() => window.__bendy.game.dial)).toBe(dial1);
+  for (let i = 1; i <= 20; i++) {
+    await page.mouse.move(rx, ry - i * 2);
+    await page.waitForTimeout(20);
+  }
+  await page.mouse.up();
+  const dial2 = await page.evaluate(() => window.__bendy.game.dial);
+  expect(dial2).toBeGreaterThan(dial1);
+  expect(dial2 - dial1).toBeLessThan(0.1);
+  // And down takes it off again.
+  await page.mouse.move(rx, ry);
+  await page.mouse.down();
+  for (let i = 1; i <= 20; i++) {
+    await page.mouse.move(rx, ry + i * 2);
+    await page.waitForTimeout(20);
+  }
+  await page.mouse.up();
+  expect(await page.evaluate(() => window.__bendy.game.dial)).toBeLessThan(dial2);
+  // The English dot moves by how far you drag, not to wherever you press.
   const spinBall = page.locator('.spinw-ball');
   const sb = (await spinBall.boundingBox())!;
-  await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2);
+  await page.mouse.move(sb.x + sb.width * 0.8, sb.y + sb.height * 0.2);
   await page.mouse.down();
-  await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height * 0.85, { steps: 4 });
+  expect(await page.evaluate(() => window.__bendy.game.englishY)).toBe(0);
+  await page.mouse.move(sb.x + sb.width * 0.8, sb.y + sb.height * 0.2 - 150, { steps: 10 });
   await page.mouse.up();
   const eng = await page.evaluate(() => ({
     x: window.__bendy.game.englishX,
     y: window.__bendy.game.englishY,
   }));
-  expect(eng.y).toBeGreaterThan(0.5);
+  expect(eng.y).toBeLessThan(-0.5);
+  expect(Math.abs(eng.x)).toBeLessThan(0.01);
   await page.screenshot({ path: `${SHOTS}/05b-dial.png` });
   await page.getByRole('button', { name: 'Shoot' }).click();
   await page.waitForFunction(() => ['strike', 'sim', 'resolve'].includes(window.__bendy.phase()));

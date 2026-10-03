@@ -1,6 +1,9 @@
+import { inNotch, notched, Scrub, scrubGain, unnotched } from './scrub';
+
 /**
- * The power dial: a 270-degree ring around the SHOOT button. Drag round it, scroll on it, or use
- * the arrow keys; press SHOOT and the stick winds up to that power and strikes.
+ * The power dial: a 270-degree ring around the SHOOT button. Drag on it (up or right for more,
+ * down or left for less; slowly for fine steps), scroll on it, or use the arrow keys; press SHOOT
+ * and the stick winds up to that power and strikes. The power clicks into a gentle notch every 5%.
  */
 
 const SVG = 'http://www.w3.org/2000/svg';
@@ -8,6 +11,20 @@ const C = 100; // viewBox centre
 const RR = 86; // ring radius
 const SWEEP = (270 * Math.PI) / 180;
 const START = (-135 * Math.PI) / 180; // from 12 o'clock, clockwise
+/** Power per px of drag: slow and careful (10 px a percent) up to a flick. */
+const FINE = 0.001;
+const COARSE = 0.01;
+/** CSS px a press may wander before it counts as a drag rather than a tap. */
+const SLOP = 6;
+
+/** A short buzz where the phone supports it (Android): the feel of a notch. */
+function buzz(): void {
+  try {
+    navigator.vibrate?.(8);
+  } catch {
+    // Not allowed here.
+  }
+}
 
 export interface DialHooks {
   get(): number;
@@ -35,8 +52,11 @@ export class PowerDial {
   private readonly pct: HTMLElement;
   private readonly fill: HTMLElement;
   private readonly label: HTMLElement;
-  private dragging: number | null = null;
+  private drag: { id: number; x0: number; y0: number; scrub: Scrub | null; raw: number } | null = null;
+  /** The last press turned into a drag (so it was not a tap on SMACK). */
+  private dragged = false;
   private shown = -1;
+  private notchT = 0;
 
   constructor(private readonly hooks: DialHooks) {
     this.el = document.createElement('div');
@@ -52,11 +72,11 @@ export class PowerDial {
     track.classList.add('dial-track');
     this.value = document.createElementNS(SVG, 'path');
     this.value.classList.add('dial-value');
-    // Tick marks every 10%.
-    for (let i = 0; i <= 10; i++) {
-      const a = START + (SWEEP * i) / 10;
+    // A tick at every notch (5%), longer every 10% and at the ends and middle.
+    for (let i = 0; i <= 20; i++) {
+      const a = START + (SWEEP * i) / 20;
       const [x0, y0] = point(a, RR - 13);
-      const [x1, y1] = point(a, RR - (i % 5 === 0 ? 22 : 18));
+      const [x1, y1] = point(a, RR - (i % 10 === 0 ? 22 : i % 2 === 0 ? 18 : 16));
       const tick = document.createElementNS(SVG, 'line');
       tick.setAttribute('x1', x0.toFixed(2));
       tick.setAttribute('y1', y0.toFixed(2));
@@ -82,6 +102,8 @@ export class PowerDial {
     this.label.innerHTML = 'SMACK!';
     this.button.append(this.fill, this.label);
     this.button.addEventListener('click', () => {
+      // A drag that started on the button set the power; only a tap shoots.
+      if (this.dragged) return;
       this.hooks.gesture();
       this.hooks.shoot();
     });
@@ -92,25 +114,41 @@ export class PowerDial {
 
     this.el.append(svg, this.button, this.pct);
 
-    svg.addEventListener('pointerdown', (e) => {
+    // The whole dial, SMACK button and all, is somewhere to drag: phones hand a touch near a button
+    // to the button, so the thin ring alone would be hard to catch. Touching changes nothing; past
+    // a little slop the drag moves the power by how far the finger travels (and a tap still
+    // shoots).
+    this.el.addEventListener('pointerdown', (e) => {
+      // Only while the shoot controls are out (planning).
+      if (this.drag || !this.el.parentElement?.classList.contains('show')) return;
       this.hooks.gesture();
-      this.dragging = e.pointerId;
-      try {
-        svg.setPointerCapture(e.pointerId);
-      } catch {
-        // Synthetic events cannot be captured.
-      }
-      this.fromPointer(svg, e);
-      e.preventDefault();
+      this.dragged = false;
+      this.drag = { id: e.pointerId, x0: e.clientX, y0: e.clientY, scrub: null, raw: 0 };
+      if (e.target !== this.button && !this.button.contains(e.target as Node)) e.preventDefault();
     });
-    svg.addEventListener('pointermove', (e) => {
-      if (e.pointerId === this.dragging) this.fromPointer(svg, e);
+    this.el.addEventListener('pointermove', (e) => {
+      const d = this.drag;
+      if (!d || e.pointerId !== d.id) return;
+      if (!d.scrub) {
+        if (Math.hypot(e.clientX - d.x0, e.clientY - d.y0) < SLOP) return;
+        // It is a drag: follow it anywhere on the screen from here.
+        d.scrub = new Scrub(e.clientX, e.clientY, e.timeStamp);
+        d.raw = unnotched(this.hooks.get());
+        this.dragged = true;
+        try {
+          this.el.setPointerCapture(e.pointerId);
+        } catch {
+          // Synthetic events cannot be captured.
+        }
+        return;
+      }
+      this.scrubTo(e);
     });
     const end = (e: PointerEvent) => {
-      if (e.pointerId === this.dragging) this.dragging = null;
+      if (e.pointerId === this.drag?.id) this.drag = null;
     };
-    svg.addEventListener('pointerup', end);
-    svg.addEventListener('pointercancel', end);
+    this.el.addEventListener('pointerup', end);
+    this.el.addEventListener('pointercancel', end);
     this.el.addEventListener(
       'wheel',
       (e) => {
@@ -121,15 +159,16 @@ export class PowerDial {
     );
   }
 
-  private fromPointer(svg: SVGSVGElement, e: PointerEvent): void {
-    const r = svg.getBoundingClientRect();
-    const x = ((e.clientX - r.left) / r.width) * 200 - C;
-    const y = ((e.clientY - r.top) / r.height) * 200 - C;
-    let a = Math.atan2(x, -y); // clockwise from 12 o'clock, in (-PI, PI]
-    // The gap at the bottom snaps to whichever end is nearer: its right half (from 4:30 round to
-    // 6 o'clock) to full power; its left half comes out below zero and clamps to none.
-    if (a > -START) a = -START;
-    this.hooks.set((a - START) / SWEEP);
+  private scrubTo(e: PointerEvent): void {
+    const d = this.drag!;
+    const m = d.scrub!.move(e.clientX, e.clientY, e.timeStamp);
+    const was = inNotch(d.raw);
+    d.raw = Math.max(0, Math.min(1, d.raw + (m.dx - m.dy) * scrubGain(m.speed, FINE, COARSE)));
+    this.hooks.set(notched(d.raw));
+    if (!was && inNotch(d.raw)) {
+      buzz();
+      this.notchT = performance.now();
+    }
   }
 
   /** Per frame: the ring shows the dial; during the windup the button fills up. */
@@ -146,6 +185,8 @@ export class PowerDial {
       this.el.dataset.zone = dial < 0.35 ? 'soft' : dial < 0.75 ? 'mid' : 'hard';
     }
     this.fill.style.transform = `scaleY(${charging && dial > 0 ? power / dial : 0})`;
+    // The knob flashes as the power clicks into a notch.
+    this.el.classList.toggle('notch', performance.now() - this.notchT < 140);
     this.el.classList.toggle('charging', charging);
     const label = charging ? 'WIND<br>UP!' : dial >= 0.99 ? 'MEGA<br>SMACK!' : 'SMACK!';
     if (this.label.innerHTML !== label) this.label.innerHTML = label;
