@@ -133,7 +133,8 @@ time, force spins, bend, place toys, shoot, replay and share. See `src/debug/api
 
 ## How it's built
 
-TypeScript and Vite with zero runtime dependencies. Everything is drawn on a 2D canvas, the HUD is
+TypeScript and Vite with zero runtime dependencies on the web (the phone apps add Capacitor's
+plugins, loaded only inside them). Everything is drawn on a 2D canvas, the HUD is
 plain DOM, and every sound is synthesized on the fly with Web Audio.
 
 The simulation is deterministic down to the last bit in every browser:
@@ -159,14 +160,24 @@ src/
              preview, the table flip
   audio/     the synthesizer
   ui/        HUD, menus (home, level select, cards), widgets (power dial, spin, toy box)
+  platform/  web vs native app: haptics, sharing, the back button, save backup
 tools/       the level solver and the balance agents (run with Vitest, not part of npm test)
-docs/        the multiplayer design and these screenshots
+docs/        the multiplayer design, the phone apps guide, these screenshots
+ios/ android/  the native app projects (Capacitor); assets/ holds their icon and splash art
 ```
 
 Physics and game logic never touch the DOM, so they are unit-tested in Node.
 
 **Multiplayer** is designed but not built yet. See [docs/multiplayer.md](docs/multiplayer.md) for
 the plan: shared-table and race matches over links or live rooms.
+
+## Phone apps
+
+The game also builds as native iOS and Android apps with [Capacitor](https://capacitorjs.com):
+the same web build in a native shell, with haptics, the system share sheet and the Android back
+button. `npm run cap:ios` and `npm run cap:android` open the projects in Xcode and Android Studio.
+Every push builds a debug APK you can install on an Android phone (**Actions → Mobile**). See
+[docs/mobile.md](docs/mobile.md) for the whole path to the App Store and Google Play.
 
 ## Deploying to GitHub Pages
 

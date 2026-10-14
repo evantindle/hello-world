@@ -20,7 +20,8 @@
     "cap:sync": "npm run build && cap sync",
     "cap:ios": "npm run cap:sync && cap open ios",
     "cap:android": "npm run cap:sync && cap open android",
-    "assets": "node tools/render-assets.mjs && capacitor-assets generate --ios --android --iconBackgroundColor '#2b1850' --iconBackgroundColorDark '#2b1850' --splashBackgroundColor '#2b1850' --splashBackgroundColorDark '#2b1850'"
+    "assets": "node tools/render-assets.mjs && capacitor-assets generate --ios --android --iconBackgroundColor '#2b1850' --iconBackgroundColorDark '#2b1850' --splashBackgroundColor '#2b1850' --splashBackgroundColorDark '#2b1850'",
+    "store-shots": "node tools/store-shots.mjs"
   },
   "devDependencies": {
     "@capacitor/assets": "^3.0.5",
