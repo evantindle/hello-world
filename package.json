@@ -16,9 +16,15 @@
     "test:e2e": "playwright test",
     "check": "npm run typecheck && npm run lint && npm run test",
     "balance": "vitest run --config vitest.tools.config.ts tools/balance.tool.ts --silent=false",
-    "solve": "vitest run --config vitest.tools.config.ts tools/solve.tool.ts --silent=false"
+    "solve": "vitest run --config vitest.tools.config.ts tools/solve.tool.ts --silent=false",
+    "cap:sync": "npm run build && cap sync",
+    "cap:ios": "npm run cap:sync && cap open ios",
+    "cap:android": "npm run cap:sync && cap open android",
+    "assets": "node tools/render-assets.mjs && capacitor-assets generate --ios --android --iconBackgroundColor '#2b1850' --iconBackgroundColorDark '#2b1850' --splashBackgroundColor '#2b1850' --splashBackgroundColorDark '#2b1850'"
   },
   "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^8.5.3",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "1.56.1",
     "@types/node": "^22.19.0",
@@ -28,5 +34,16 @@
     "typescript-eslint": "^8.71.0",
     "vite": "^8.3.1",
     "vitest": "^5.0.2"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/app": "^8.1.2",
+    "@capacitor/core": "^8.5.3",
+    "@capacitor/haptics": "^8.0.2",
+    "@capacitor/ios": "^8.5.3",
+    "@capacitor/preferences": "^8.0.1",
+    "@capacitor/share": "^8.0.3",
+    "@capacitor/splash-screen": "^8.0.2",
+    "@capacitor/status-bar": "^8.0.4"
   }
 }

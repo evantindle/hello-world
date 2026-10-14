@@ -1,3 +1,4 @@
+import { platform } from '../../platform/platform';
 import { inNotch, notched, Scrub, scrubGain, unnotched } from './scrub';
 
 /**
@@ -16,15 +17,6 @@ const FINE = 0.001;
 const COARSE = 0.01;
 /** CSS px a press may wander before it counts as a drag rather than a tap. */
 const SLOP = 6;
-
-/** A short buzz where the phone supports it (Android): the feel of a notch. */
-function buzz(): void {
-  try {
-    navigator.vibrate?.(8);
-  } catch {
-    // Not allowed here.
-  }
-}
 
 export interface DialHooks {
   get(): number;
@@ -166,7 +158,7 @@ export class PowerDial {
     d.raw = Math.max(0, Math.min(1, d.raw + (m.dx - m.dy) * scrubGain(m.speed, FINE, COARSE)));
     this.hooks.set(notched(d.raw));
     if (!was && inNotch(d.raw)) {
-      buzz();
+      platform.tick();
       this.notchT = performance.now();
     }
   }

@@ -13,6 +13,7 @@ import { LevelsScreen, starsEarned, unlocked } from './screens/levels';
 import { PowerDial } from './widgets/dial';
 import { SpinWidget } from './widgets/spin';
 import { TrayWidget } from './widgets/tray';
+import { platform } from '../platform/platform';
 
 const ICON_SOUND =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path d="M16 8.5c1.2 1 1.8 2.2 1.8 3.5s-.6 2.5-1.8 3.5M18.5 6c2 1.6 3 3.6 3 6s-1 4.4-3 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
@@ -377,10 +378,12 @@ export class Hud {
   private async share(): Promise<void> {
     const url = await this.hooks.shareLink();
     if (!url) return;
+    const data = { title: 'Bendy Billiards', text: 'Look at this shot!', url };
+    if (platform.share && (await platform.share(data))) return;
     const nav = navigator as Navigator & { share?: (d: ShareData) => Promise<void> };
     if (nav.share && window.matchMedia('(pointer: coarse)').matches) {
       try {
-        await nav.share({ title: 'Bendy Billiards', text: 'Look at this shot!', url });
+        await nav.share(data);
         return;
       } catch (e) {
         if (e instanceof DOMException && e.name === 'AbortError') return;
@@ -460,6 +463,24 @@ export class Hud {
         levels: tap(() => this.showLevels()),
       }),
     );
+  }
+
+  /**
+   * The Android back button, one step at a time: close a box, stop a replay, cancel a windup, then
+   * leave the game, the level card, the level select. False on the home screen (the app closes).
+   */
+  back(): boolean {
+    const g = this.game;
+    if (this.closeBox()) return true;
+    if (g.phase === 'replay' && g.rules.mode !== 'viewer') g.stopReplay();
+    else if (g.charging) g.cancelShot();
+    else if (this.screen === 'viewer') this.leaveViewer();
+    else if (this.screen === 'play') this.toMenu();
+    else if (this.screen === 'intro') this.showLevels();
+    else if (this.screen === 'levels') this.showHome();
+    else return false;
+    this.hooks.press();
+    return true;
   }
 
   /** Leaves the game: Classic goes back to the level select, Free Play to the front door. */

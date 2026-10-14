@@ -23,6 +23,7 @@ import { Input } from './input/input';
 import { Camera } from './render/camera';
 import { Renderer } from './render/renderer';
 import { Hud } from './ui/hud';
+import { linkBase, startPlatform } from './platform/platform';
 import { RAIL_W, TABLE_H, TABLE_W } from './config';
 
 const params = new URLSearchParams(location.search);
@@ -32,6 +33,10 @@ const demo = params.get('demo') === '1';
 // For testing: Free Play with one of every toy in the tray, with ?toys=1 (or in a build made with
 // VITE_TOYS=1). The remix and the Toy Box hand out toys on their own.
 const toys = params.get('toys') === '1' || (import.meta.env.VITE_TOYS === '1' && params.get('toys') !== '0');
+
+// In the native apps, plug in haptics, the share sheet and the back button, and restore the save
+// if the phone cleared it, all before the game reads it. (Nothing to wait for on the web.)
+await startPlatform({ back: () => hud.back() });
 
 const canvas = document.getElementById('world') as HTMLCanvasElement;
 const hudRoot = document.getElementById('hud') as HTMLElement;
@@ -55,6 +60,8 @@ const sfx = new Sfx();
 if (params.get('mute') === '1') sfx.muted = true;
 
 const gesture = () => sfx.unlock();
+// No sound from a hidden tab or a backgrounded app.
+document.addEventListener('visibilitychange', () => sfx.pause(document.hidden));
 const toggleMute = (): boolean => {
   sfx.setMuted(!sfx.muted);
   return sfx.muted;
@@ -101,7 +108,7 @@ const hud = new Hud(hudRoot, game, {
     const rec = game.history[game.history.length - 1];
     if (!rec) return null;
     const code = await encodeShot(sharedFromRecord(rec, game.rules.mode, game.tableName));
-    return shareUrl(code, location);
+    return shareUrl(code, linkBase());
   },
   toggleMute,
   isMuted: () => sfx.muted,
@@ -230,7 +237,7 @@ installDebugApi({
   shareLink: async () => {
     const rec = game.history[game.history.length - 1];
     if (!rec) return null;
-    return shareUrl(await encodeShot(sharedFromRecord(rec, game.rules.mode, game.tableName)), location);
+    return shareUrl(await encodeShot(sharedFromRecord(rec, game.rules.mode, game.tableName)), linkBase());
   },
   toyBox: () => game.load(toyBoxSetup()),
 });

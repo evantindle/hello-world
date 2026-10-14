@@ -64,6 +64,13 @@ export class Sfx {
     return !!this.ctx && this.ctx.state === 'running' && !this.muted;
   }
 
+  /** Hush everything while the page is hidden (another tab, the app in the background). */
+  pause(hidden: boolean): void {
+    if (!this.ctx) return;
+    if (hidden) void this.ctx.suspend().catch(() => {});
+    else void this.ctx.resume().catch(() => {});
+  }
+
   setMuted(m: boolean): void {
     this.muted = m;
     try {

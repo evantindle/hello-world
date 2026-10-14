@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Bendy Billiards</string>
+    <string name="title_activity_main">Bendy Billiards</string>
+    <string name="package_name">com.evantindle.bendybilliards</string>
+    <string name="custom_url_scheme">com.evantindle.bendybilliards</string>
+</resources>
